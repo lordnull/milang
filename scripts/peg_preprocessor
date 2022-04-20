@@ -1,0 +1,194 @@
+#! /usr/bin/env escript
+
+main([]) ->
+	error(need_a_peg_file);
+main(DirsAndFiles) ->
+	put(mode, peg),
+	{SearchDirs, Peg} = consume_args(DirsAndFiles),
+	case get(make) of
+		undefined ->
+			process_peg(Peg, SearchDirs);
+		Target ->
+			create_makefile(Peg, Target, SearchDirs)
+	end.
+
+consume_args([]) ->
+	error(need_a_peg_file);
+consume_args(Args) ->
+	consume_args(Args, []).
+
+consume_args([File], SearchDirs) ->
+	{SearchDirs, File};
+consume_args(["-v" | Tail], Acc) ->
+	put(verbose, true),
+	consume_args(Tail, Acc);
+consume_args(["--makefile", OutputFile | Tail], Acc) ->
+	put(make, OutputFile),
+	consume_args(Tail, Acc);
+consume_args([Dir | Tail], Acc) ->
+	consume_args(Tail, [Dir | Acc]).
+
+create_makefile(Peg, Target, SearchDirs) ->
+	{ok, DepName} = find_file(Peg, SearchDirs),
+	{ok, FileHandle} = open_file(DepName),
+	DepSet = create_depset(FileHandle, SearchDirs, _HandleStack = [], _AlreadyRegistered = [DepName]),
+	write_makefile(Target, Peg, SearchDirs, DepSet).
+
+write_makefile(Target, SourcePeg, SearchDirs, DepSet) ->
+	io:format("~s :", [Target]),
+	ok = lists:foreach(fun(Dep) ->
+		io:format(" ~s", [Dep])
+	end, DepSet),
+	io:format("~n\t ./scripts/peg_preprocessor"),
+	ok = lists:foreach(fun(Dir) ->
+		io:format(" ~s", [Dir])
+	end, SearchDirs),
+	io:format(" ~s > ~s", [SourcePeg, Target]).
+
+create_depset(FileHandle, SearchDirs, HandleStack, DepSet) ->
+	case file:read_line(FileHandle) of
+		eof when HandleStack =:= [] ->
+			ok = log("file rully read and stack empty", []),
+			ok = file:close(FileHandle),
+			DepSet;
+		eof ->
+			ok = log("file fully read, popping from stack", []),
+			ok = file:close(FileHandle),
+			[NewHandle | NewStack] = HandleStack,
+			create_depset(NewHandle, SearchDirs, NewStack, DepSet);
+		{ok, <<"%%@import ", FilenameWithNewline/binary>>} ->
+			ShortFilename = remove_newline(FilenameWithNewline),
+			{ok, Filename} = find_file(ShortFilename, SearchDirs),
+			ok = log("processing import line of ~s", [Filename]),
+			case ordsets:is_element(Filename, DepSet) of
+				true ->
+					ok = log("~s already registered", [Filename]),
+					create_depset(FileHandle, SearchDirs, HandleStack, DepSet);
+				false ->
+					{ok, NewHandle} = open_file(Filename),
+					create_depset(NewHandle, SearchDirs, [FileHandle | HandleStack], ordsets:add_element(Filename, DepSet))
+			end;
+		{ok, <<"%%@append ", FilenameWithNewline/binary>>} ->
+			ShortFilename = remove_newline(FilenameWithNewline),
+			{ok, Filename} = find_file(ShortFilename, SearchDirs),
+			ok = log("processing append of ~s", [Filename]),
+			case lists:member(Filename, DepSet) of
+				true ->
+					ok = log("~s is already registered to deps", [Filename]),
+					create_depset(FileHandle, SearchDirs, HandleStack, DepSet);
+				false ->
+					{ok, NewHandle} = open_file(Filename),
+					create_depset(NewHandle, SearchDirs, [FileHandle | HandleStack], ordsets:add_element(Filename, DepSet))
+			end;
+		{ok, _Line} ->
+			create_depset(FileHandle, SearchDirs, HandleStack, DepSet)
+	end.
+
+process_peg(Peg, SearchDirs) ->
+	{ok, FileHandle} = search_and_open(Peg, SearchDirs),
+	process_peg(FileHandle, SearchDirs, _HandleStack = [], _AlreadyImported = [], _AppendRegister = []).
+
+process_peg(FileHandle, SearchDirs, HandleStack, ImportedSet, AppendRegister) ->
+	case file:read_line(FileHandle) of
+		eof when HandleStack =:= [] ->
+			ok = log("file fully read and stack empty", []),
+			ok = file:close(FileHandle),
+			output_appends(lists:reverse(AppendRegister));
+		eof ->
+			ok = log("file fully read, popping from stack", []),
+			ok = io:format("%% import ended~n"),
+			ok = file:close(FileHandle),
+			[NewHandle | NewStack] = HandleStack,
+			process_peg(NewHandle, SearchDirs, NewStack, ImportedSet, AppendRegister);
+		{ok, <<"%%@import ", FilenameWithNewline/binary>>} ->
+			Filename = remove_newline(FilenameWithNewline),
+			ok = log("processing import of ~s", [Filename]),
+			case ordsets:is_element(Filename, ImportedSet) of
+				true ->
+					ok = log("~s was already imported", [Filename]),
+					process_peg(FileHandle, SearchDirs, HandleStack, ImportedSet, AppendRegister);
+				false ->
+					{ok, NewHandle} = search_and_open(Filename, SearchDirs),
+					ok = io:format("%% import of ~s starts here.~n", [Filename]),
+					process_peg(NewHandle, SearchDirs, [FileHandle | HandleStack], ordsets:add_element(Filename, ImportedSet), AppendRegister)
+			end;
+		{ok, <<"%%@append ", FilenameWithNewline/binary>>} ->
+			Filename = remove_newline(FilenameWithNewline),
+			ok = log("processing append of ~s", [Filename]),
+			{ok, FoundFile} = find_file(Filename, SearchDirs),
+			case lists:member(FoundFile, AppendRegister) of
+				true ->
+					ok = log("~s is already registered to append", [FoundFile]),
+					process_peg(FileHandle, SearchDirs, HandleStack, ImportedSet, AppendRegister);
+				false ->
+					process_peg(FileHandle, SearchDirs, HandleStack, ImportedSet, [FoundFile | AppendRegister])
+			end;
+		{ok, <<"%%@skip-on-include", _/binary>>} when HandleStack =/= [] ->
+			ok = skip_section(FileHandle),
+			process_peg(FileHandle, SearchDirs, HandleStack, ImportedSet, AppendRegister);
+		{ok, Line} ->
+			io:format("~s", [Line]),
+			process_peg(FileHandle, SearchDirs, HandleStack, ImportedSet, AppendRegister)
+	end.
+
+skip_section(FileHandle) ->
+	case file:read_line(FileHandle) of
+		eof ->
+			error(unexpected_eof);
+		{ok, <<"%%@end-skip", _/binary>>} ->
+			ok;
+		{ok, _Line} ->
+			skip_section(FileHandle)
+	end.
+
+output_appends([]) -> ok;
+output_appends([Filename | Tail]) ->
+	ok = log("appending ~s", [Filename]),
+	ok = io:format("%% append of ~s starts here~n", [Filename]),
+	{ok, Bin} = file:read_file(Filename),
+	io:format("~s", [Bin]),
+	ok = io:format("%% append ended~n"),
+	output_appends(Tail).
+
+
+remove_newline(Binary) ->
+	string:trim(Binary, trailing, "\n").
+
+find_file(File, SearchDirs) ->
+	case filelib:is_regular(File) of
+		true ->
+			{ok, File};
+		false ->
+			find_file_proper(File, SearchDirs)
+	end.
+
+find_file_proper(File, []) ->
+	error({file_not_found, File});
+find_file_proper(File, [Dir | Tail]) ->
+	JoinedName = filename:join(Dir, File),
+	case filelib:is_regular(JoinedName) of
+		true ->
+			{ok, JoinedName};
+		false ->
+			find_file_proper(File, Tail)
+	end.
+
+open_file(File) ->
+	case file:open(File, [read,binary]) of
+		{ok, _} = Okay ->
+			Okay;
+		NotOkay ->
+			error({cannot_open_file, File, NotOkay})
+	end.
+
+search_and_open(File, SearchDirs) ->
+	{ok, Filename} = find_file(File, SearchDirs),
+	open_file(Filename).
+
+log(Format, Args) ->
+	case get(verbose) of
+		true ->
+			io:format("%% " ++ Format ++ "~n", Args);
+		_ ->
+			ok
+	end.

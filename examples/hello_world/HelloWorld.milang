@@ -1,0 +1,7 @@
+-module HelloWorld exposing [, main ] .
+
+-import System.Print exposing [, ln ].
+
+main : List String -> Actor Never Never Never.
+main a ->
+	Actor.do (ln "Hello, World!").

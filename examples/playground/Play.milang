@@ -1,0 +1,63 @@
+-unsafe-module Math exposing
+	, Int
+	, Float
+	, toFloat
+	, roundToNearest
+	, roundToZero
+	, roundAwayFromZero
+	, roundHigher
+	, roundLower
+	.
+
+-import System.Comparison exposing , Equal, Ordered .
+-import System.Internal as Internal.
+
+-alias Int is Internal.Int
+
+-instance Equal Int
+	, '==' a b -> native @ a = 'A' @ b = 'B'. `A == B.`
+	, '<>' a b -> native @ a = 'A' @ b = 'B'. `A =/= B.`
+	.
+
+-instance Ordered Int
+	, '<' a b -> native @ a = 'A' @ b = 'B'. `A < B.`
+	, '<=' a b -> native @ a = 'A' @ b = 'B'. `A =< B.`
+	, '>=' a b -> native @ a = 'A' @ b = 'B'. `A >= B.`
+	, '>' a b -> native @ a = 'A' @ b = 'B'. `A > B.`
+	.
+
+-alias Float is Internal.Float
+
+-instance Equal Float
+	, '==' a b -> native @ a = 'A' @ b = 'B'. `A == B.`
+	, '<>' a b -> native @ a = 'A' @ b = 'B'. `A =/= B.`
+	.
+
+-instance Ordered Float
+	, '<' a b -> native @ a = 'A' @ b = 'B'. `A < B.`
+	, '<=' a b -> native @ a = 'A' @ b = 'B'. `A =< B.`
+	, '>=' a b -> native @ a = 'A' @ b = 'B'. `A >= B.`
+	, '>' a b -> native @ a = 'A' @ b = 'B'. `A > B.`
+	.
+
+-instance Internal.Add Int
+	, '+' a b -> native @ a = 'A' @ b = 'B'. `A + B.`
+	, '-' a b -> native @ a = 'A' @ b = 'B'. `A - B.`
+	.
+
+-instance Internal.Add Float
+	, '+' a b -> native @ a = 'A' @ b = 'B'. `A + B.`
+	, '-' a b -> native @ a = 'A' @ b = 'B'. `A - B.`
+	.
+
+-instance Internal.Multiply Int
+	, '*' a b -> native @ a = 'A' @ b = 'B'. `A * B.`
+	, '/' a b -> native @a = 'A' @ b = 'B'. `A / B.`
+	.
+
+-instance Internal.Multiply Float
+	, '*' a b -> native @ a = 'A' @ b = 'B'. `A * B.`
+	, '/' a b -> native @a = 'A' @ b = 'B'. `A / B.`
+	.
+
+-instance Internal.Remainder
