@@ -150,7 +150,7 @@ update_location(Binary, OldRow, OldCol) ->
 			{OldRow + length(Rows), size(LastPart)}
 	end.
 
--spec andThen(parser(Err, Ok), fun((non_neg_integer(), parse_terminal(Err, Ok)) -> parser(NextErr, NextOk))) -> parser(NextErr, NextOk).
+-spec andThen(parser(Err, Ok), fun((Ok) -> parser(NextErr, NextOk))) -> parser(NextErr | Err, NextOk).
 andThen(Parser, Next) ->
 	fun(_, _) ->
 		{push, 0, Parser, fun andThenAcc/2, {next, Next}}
@@ -164,10 +164,11 @@ andThenAcc({ok, C, Value}, {next, Next}) ->
 andThenAcc({ok, C, Value}, {consumed, OldConsumed}) ->
 	{ok, C + OldConsumed, Value}.
 
--spec regex(unicode:unicode_binary()) -> parser(nomatch, [ unicode:unicode_binary() ]).
+-spec regex(unicode:chardata()) -> parser(nomatch, [ unicode:unicode_binary() ]).
 regex(Test) ->
 	regex(Test, all).
 
+-spec regex(unicode:chardata(), all | first | all_but_first | none) -> parser(nomatch, [unicode:unicode_binary()]).
 regex(Test, CaptureMode) ->
 	{ok, Compiled} = re:compile(Test, [anchored, unicode, ucp]),
 	fun(_Location, Subject) ->
@@ -192,7 +193,7 @@ regex(Subject, RE, CaptureMode) ->
 			{ok, Size, Matched}
 	end.
 
--spec peek(unicode:unicode_binary()) -> parser(nomatch, unicode:unicode_binary()).
+-spec peek(unicode:chardata()) -> parser(nomatch, unicode:unicode_binary()).
 peek(Test) ->
 	RegExFun = regex(Test),
 	fun(_Location, _Subject) ->
@@ -273,6 +274,7 @@ combine_oks(Oks) ->
 	end, 0, Oks),
 	{ok, TotalC, Values}.
 
+-spec series([parser(Err, Ok)]) -> parser(Err, [Ok]).
 series([]) ->
 	error(badarg);
 series([FirstParser | Parsers]) ->
@@ -288,6 +290,7 @@ series_acc({ok, _, _} = Ok, {[], TailResults}) ->
 series_acc({ok, C, _} = Ok, {[Parser | Tail], Results}) ->
 	{next, C, Parser, {Tail, [Ok | Results]}}.
 
+-spec repeat_for(non_neg_integer(), parser(Err, Ok)) -> parser(Err, [Ok]).
 repeat_for(N, Parser) ->
 	fun(_, _) ->
 		{push, 0, Parser, fun repeat_for_acc/2, {Parser, N, []}}
@@ -305,9 +308,11 @@ repeat_for_acc({ok, C, _} = Ok, {Parser, N, Acc}) ->
 repeat_for_acc({error, _} = Error, {_, _, _}) ->
 	Error.
 
+-spec optional(parser(Err, Ok)) -> parser(Err, [Ok]).
 optional(Parser) ->
 	repeat_at_most(1, Parser).
 
+-spec repeat_at_most(non_neg_integer(), parser(Err, Ok)) -> parser(Err, [Ok]).
 repeat_at_most(N, Parser) ->
 	fun(_, _) ->
 		{push, 0, Parser, fun repeat_at_most_acc/2, {Parser, N, N, []}}
@@ -320,6 +325,7 @@ repeat_at_most_acc({ok, C, _} = Ok, {Parser, Max, Left, Acc}) ->
 repeat_at_most_acc({error, _}, {_Parser, _Max, _Left, Acc}) ->
 	combine_oks(lists:reverse(Acc)).
 
+-spec repeat_until_error(parser(Err, Ok)) -> parser(Err, [Ok]).
 repeat_until_error(Parser) ->
 	fun(_, _) ->
 		{push, 0, Parser, fun repeat_until_error_acc/2, {Parser, []}}
@@ -330,6 +336,7 @@ repeat_until_error_acc({ok, C, _} = Ok, {Parser, Acc}) ->
 repeat_until_error_acc({error, _}, {_Parser, Acc}) ->
 	combine_oks(lists:reverse(Acc)).
 
+-spec repeat(non_neg_integer(), infinity | non_neg_integer(), parser(Err, Ok)) -> parser(Err, [Ok]).
 repeat(Min, infinity, Parser) ->
 	MinRepeat = repeat_for(Min, Parser),
 	TailRepeat = repeat_until_error(Parser),
@@ -343,6 +350,7 @@ repeat(Min, Max, Parser) ->
 	Mapper = fun([A, B]) -> A ++ B end,
 	map(Series, Mapper).
 
+-spec tag(Tag, parser(Err, Ok)) -> parser(Err, {Tag, location(), Ok}).
 tag(Tag, Parser) ->
 	fun(Location, _) ->
 		{push, 0, Parser, fun tag_acc/2, {Tag, Location}}
@@ -353,14 +361,17 @@ tag_acc({error, _} = Wut, _) ->
 tag_acc({ok, C, Value}, {Tag, Location}) ->
 	{ok, C, {Tag, Location, Value}}.
 
+-spec chomp() -> parser(none(), unicode:unicode_binary()).
 chomp() ->
 	fun chomp_implementation/2.
 
+-spec chomp(non_neg_integer()) -> parser(none(), unicode:unicode_binary()).
 chomp(N) ->
 	Repeat = repeat_for(N, chomp()),
 	Map = fun unicode:characters_to_binary/1,
 	parse:map(Repeat, Map).
 
+-spec chomp_if(fun((char() | unicode:unicode_binary()) -> boolean())) -> parser({not_chompable, char() | unicode:unicode_binary()}, unicode:unicode_binary()).
 chomp_if(Predicate) ->
 	AndThen = fun(C) ->
 		case Predicate(C) of
@@ -372,6 +383,7 @@ chomp_if(Predicate) ->
 	end,
 	andThen(chomp(), AndThen).
 
+-spec chomp_while(fun((char() | unicode:unicode_binary()) -> boolean())) -> parser(none, unicode:unicode_binary()).
 chomp_while(Predicate) ->
 	fun(_, _) ->
 		{push, 0, chomp(), fun chomp_acc/2, {Predicate, []}}
@@ -389,6 +401,7 @@ chomp_acc({error, #{ reason := end_of_input}}, {_, Acc}) ->
 chomp_acc(Error, _) ->
 	Error.
 
+-spec chomp_until(unicode:chardata()) -> parser(none(), unicode:unicode_binary()).
 chomp_until(TestString) ->
 	fun(_, _) ->
 		{push, 0, chomp_until_implementation(TestString), fun chomp_until_acc/2, {TestString, []}}
@@ -419,6 +432,7 @@ chomp_implementation(_Location, <<C/utf8, _/binary>>) ->
 chomp_implementation(_, <<>>) ->
 	{error, end_of_input}.
 
+-spec chomp_until_end_or(unicode:chardata()) -> parser(any(), unicode:unicode_binary()).
 chomp_until_end_or(TestString) ->
 	fun(_, _) ->
 		{push, 0, chomp_until_implementation(TestString), fun chomp_until_end_acc/2, {TestString, []}}
@@ -437,6 +451,7 @@ combine_chomped(Acc) ->
 	{ok, Size, List} = combine_oks(lists:reverse(Acc)),
 	{ok, Size, unicode:characters_to_binary(List)}.
 
+-spec lazy(fun(() -> parser(Err, Ok))) -> parser(Err, Ok).
 lazy(Builder) ->
 	fun(_, _) ->
 		{push, 0, Builder(), fun lazy_acc/2, undefined}
