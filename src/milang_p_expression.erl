@@ -142,7 +142,6 @@ literal_string() ->
 	Regex = <<"\"((?:[^\"\\\\]|\\\\.)*)\"">>,
 	ParsedRegex = parse:regex(Regex),
 	Mapper = fun([_, V]) ->
-		io:format("the regex result? ~p~n", [V]),
 		V
 	end,
 	Mapped = parse:map(ParsedRegex, Mapper),

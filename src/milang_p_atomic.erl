@@ -166,7 +166,6 @@ infix_symbol() ->
 		(<<".">>) ->
 			{error, solo_dot_not_allowed};
 		(_Passing) ->
-			io:format("yo yo yo I PASS!~p~n", [_Passing]),
 			ok
 	end),
 	parse:tag(infix_symbol, ValueCheckP).

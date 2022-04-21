@@ -40,37 +40,21 @@ declaration() ->
 	PeekP = parse:peek(PeekRegex),
 	AndThenner = fun
 		([<<"-module">> | _]) ->
-			io:format("blerg ~p~n", [?LINE]),
 			declaration_module();
 		([<<"-import">> | _]) ->
-			io:format("blerg ~p~n", [?LINE]),
 			declaration_import();
 		([<<"-alias">> | _]) ->
-			io:format("blerg ~p~n", [?LINE]),
 			declaration_alias();
 		([<<"-type">> | _]) ->
-			io:format("blerg ~p~n", [?LINE]),
 			declaration_type();
 		([<<"-class">> | _]) ->
-			io:format("blerg ~p~n", [?LINE]),
 			declaration_class();
 		([_, _, <<":">> | _]) ->
-			io:format("blerg ~p~n", [?LINE]),
 			declaration_spec();
 		(_) ->
-			io:format("blerg ~p~n", [?LINE]),
 			declaration_function()
 	end,
 	parse:andThen(PeekP, AndThenner).
-%	parse:first_of(
-%		[ declaration_module()
-%		, declaration_import()
-%		, declaration_alias()
-%		, declaration_type()
-%		, declaration_class()
-%		, declaration_spec()
-%		, declaration_function()
-%		]).
 
 declaration_module() ->
 	SeriesP = parse:series(
