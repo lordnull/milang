@@ -30,6 +30,8 @@
 
 -type parser(Err, Ok) :: fun((location(), unicode:unicode_binary()) -> parse_result(Err, Ok, _)).
 
+-type parser_context() :: #{ mf := {atom(), atom()}, type := remote | local, env := any()}.
+
 -export_type([parser/2, parser/3]).
 
 -export([it/2]).
@@ -42,6 +44,7 @@
 	, character/1
 	, string/1
 	, map/2
+	, unless/2
 	, andThen/2
 	, first_of/1
 	, series/1
@@ -67,7 +70,7 @@ it(Binary, Parser) ->
 	Result = Parser(Location, Binary),
 	AccFun = fun default_acc/2,
 	AccState = undefined,
-	try parse(Binary, Location, Result, AccFun, AccState, Stack) of
+	try parse(Binary, Location, Result, AccFun, AccState, create_parser_context(Parser), Stack) of
 		Out ->
 			Out
 	catch
@@ -83,27 +86,37 @@ it(Binary, Parser) ->
 
 default_acc(E, _) -> E.
 
--spec parse(unicode:unicode_binary(), location(), parse_result(Err, Ok, Acc), parse_accumulator(Err, Ok, Acc), Acc, parse_stack(Err, Ok, Acc)) -> parse_err(Err) | parse_ok(Ok).
+-spec parse(unicode:unicode_binary(), location(), parse_result(Err, Ok, Acc), parse_accumulator(Err, Ok, Acc), Acc, parser_context(), parse_stack(Err, Ok, Acc)) -> parse_err(Err) | parse_ok(Ok).
 
-parse(Binary, Location, {push, Consume, NewParser, NewAccFun, NewAccState}, AccFun, AccState, Stack) ->
-	PushItem = {Binary, Location, AccFun, AccState},
+parse(Binary, Location, {push, Consume, NewParser, NewAccFun, NewAccState}, AccFun, AccState, Context, Stack) ->
+	PushItem = {Binary, Location, AccFun, AccState, Context},
 	NewStack = [ PushItem | Stack ],
 	{NewLocation, NewBinary} = consume(Consume, Location, Binary),
+	NewContext = create_parser_context(NewParser),
 	NewResult = NewParser(NewLocation, NewBinary),
-	parse(NewBinary, NewLocation, NewResult, NewAccFun, NewAccState, NewStack);
-parse(Binary, Location, RawResult, AccFun, AccState, Stack) ->
-	Result = expand_result(RawResult, #{ binary => Binary, location => Location, acc_fun => AccFun, acc_state => AccState, stack => Stack}),
+	parse(NewBinary, NewLocation, NewResult, NewAccFun, NewAccState, NewContext, NewStack);
+parse(Binary, Location, RawResult, AccFun, AccState, Context, Stack) ->
+	Result = expand_result(RawResult, #{ binary => Binary, location => Location, acc_fun => AccFun, acc_state => AccState, parser_context => Context, stack => Stack}),
 	case AccFun(Result, AccState) of
 		{next, Consume, NewParser, NewState} ->
 			{NewLocation, NewBinary} = consume(Consume, Location, Binary),
+			NewContext = create_parser_context(NewParser),
 			NewResult = NewParser(NewLocation, NewBinary),
-			parse(NewBinary, NewLocation, NewResult, AccFun, NewState, Stack);
+			parse(NewBinary, NewLocation, NewResult, AccFun, NewState, NewContext, Stack);
 		NewResult when Stack =:= [] ->
 			finalize(Binary, Location, NewResult);
 		NewResult ->
-			[{NewBinary, NewLocation, NewAccFun, NewAccState} | NewStack] = Stack,
-			parse(NewBinary, NewLocation, NewResult, NewAccFun, NewAccState, NewStack)
+			[{NewBinary, NewLocation, NewAccFun, NewAccState, NewContext} | NewStack] = Stack,
+			parse(NewBinary, NewLocation, NewResult, NewAccFun, NewAccState, NewContext, NewStack)
 	end.
+
+create_parser_context(Parser) ->
+	InfoProplist = erlang:fun_info(Parser),
+	Module = proplists:get_value(module, InfoProplist),
+	Name = proplists:get_value(name, InfoProplist),
+	Type = proplists:get_value(type, InfoProplist),
+	Env = proplists:get_value(env, InfoProplist),
+	#{ mf => {Module, Name}, type => Type, env => Env}.
 
 expand_result({error, Map}, _BaseError) when is_map(Map) ->
 	{error, Map};
@@ -164,6 +177,22 @@ andThenAcc({ok, C, Value}, {next, Next}) ->
 andThenAcc({ok, C, Value}, {consumed, OldConsumed}) ->
 	{ok, C + OldConsumed, Value}.
 
+-spec unless(parser(Err, Ok), fun((Ok) -> {error, NewErr} | ok)) -> parser(Err | NewErr, Ok).
+unless(Parser, Predicate) ->
+	fun(_Location, _Subject) ->
+		{push, 0, Parser, fun unless_acc/2, Predicate}
+	end.
+
+unless_acc({ok, _, Value} = Success, Predicate) ->
+	case Predicate(Value) of
+		{error, _} = Error ->
+			Error;
+		ok ->
+			Success
+	end;
+unless_acc(Error, _Predicate) ->
+	Error.
+
 -spec regex(unicode:chardata()) -> parser(nomatch, [ unicode:unicode_binary() ]).
 regex(Test) ->
 	regex(Test, all).
@@ -172,10 +201,10 @@ regex(Test) ->
 regex(Test, CaptureMode) ->
 	{ok, Compiled} = re:compile(Test, [anchored, unicode, ucp]),
 	fun(_Location, Subject) ->
-		regex(Subject, Compiled, CaptureMode)
+		regex(Subject, Compiled, CaptureMode, Test)
 	end.
 
-regex(Subject, RE, CaptureMode) ->
+regex(Subject, RE, CaptureMode, _Test) ->
 	case re:run(Subject, RE, [{capture, CaptureMode, binary}]) of
 		nomatch ->
 			{error, nomatch};
@@ -258,15 +287,27 @@ map_acc(Error, _) ->
 -spec first_of([parser(_, Ok)]) -> parser(nomatch, Ok).
 first_of(Parsers) ->
 	fun(_Location, _Subject) ->
-		{push, 0, fail(nomatch), fun first_of_acc/2, Parsers}
+		{push, 0, fail(nomatch), fun first_of_acc/2, {Parsers, undefined}}
 	end.
 
 first_of_acc({ok, _, _} = Ok, _) ->
 	Ok;
-first_of_acc({error, _}, []) ->
-	{error, nomatch};
-first_of_acc({error, _}, [Parser | NewState]) ->
-	{next, 0, Parser, NewState}.
+first_of_acc({error, _}, {[], undefined}) ->
+	{error, no_parsers_to_match};
+first_of_acc({error, _} = Last, {[], Errors}) ->
+	ErrorsInOrder = lists:reverse([Last | Errors]),
+	JustReasonAndContext = lists:map(fun({error, #{ reason := Reason, parser_context := Context}}) ->
+		{Reason, Context}
+	end, ErrorsInOrder),
+	{error, {nomatch, JustReasonAndContext}};
+first_of_acc({error, _} = Error, {[Parser | NewState], OldAcc}) ->
+	NewAcc = case OldAcc of
+		undefined ->
+			[];
+		_ ->
+			[Error | OldAcc]
+	end,
+	{next, 0, Parser, {NewState, NewAcc}}.
 
 combine_oks(Oks) ->
 	{Values, TotalC} = lists:mapfoldl(fun({ok, C, V}, A) ->
@@ -325,7 +366,7 @@ repeat_at_most_acc({ok, C, _} = Ok, {Parser, Max, Left, Acc}) ->
 repeat_at_most_acc({error, _}, {_Parser, _Max, _Left, Acc}) ->
 	combine_oks(lists:reverse(Acc)).
 
--spec repeat_until_error(parser(Err, Ok)) -> parser(Err, [Ok]).
+-spec repeat_until_error(parser(_, Ok)) -> parser(none(), [Ok]).
 repeat_until_error(Parser) ->
 	fun(_, _) ->
 		{push, 0, Parser, fun repeat_until_error_acc/2, {Parser, []}}
@@ -356,9 +397,11 @@ tag(Tag, Parser) ->
 		{push, 0, Parser, fun tag_acc/2, {Tag, Location}}
 	end.
 
-tag_acc({error, _} = Wut, _) ->
+tag_acc({error, _} = Wut, _TagData) ->
+	%io:format("Tag attempt failed.~n    TagData: ~p~n    Error: ~p~n", [_TagData, Wut]),
 	Wut;
 tag_acc({ok, C, Value}, {Tag, Location}) ->
+	%io:format("Popping tag~n    Tag: ~p~n    Location:~p~n    Chomped:~p~n    Value: ~p~n", [Tag, Location, C, Value]),
 	{ok, C, {Tag, Location, Value}}.
 
 -spec chomp() -> parser(none(), unicode:unicode_binary()).

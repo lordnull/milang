@@ -13,6 +13,7 @@
 	, module_name_prefix/0
 	, variable/0
 	, infix/0
+	, infix_symbol/0
 	, function_name/0
 	, function_name_symbol/0
 	, function_name_local/0
@@ -113,14 +114,7 @@ variable() ->
 	parse:tag(variable, downcase_name()).
 
 infix() ->
-	NotationOrSymbol = parse:first_of([ infix_notation(), infix_symbol() ]),
-	ValueCheck =
-		fun({infix_symbol, _, <<"=">>}) ->
-				parse:fail(solo_equals_not_allowed);
-			(E) ->
-				parse:success(E)
-		end,
-	parse:andThen(NotationOrSymbol, ValueCheck).
+	parse:first_of([ infix_notation(), infix_symbol() ]).
 
 infix_notation() ->
 	parse:first_of([infix_left_assoc(), infix_right_assoc()]).
@@ -147,37 +141,35 @@ infix_right_assoc() ->
 	end,
 	parse:map(Tagged, Mapper).
 
-is_not_element(Set) ->
-	fun(E) ->
-		not ordsets:is_element(E, Set)
-	end.
-
-pass_regex(RegEx) ->
-	fun(E) ->
-		case re:run([E], RegEx) of
-			nomatch ->
-				false;
-			_ ->
-				true
-		end
-	end.
-
-pass_all(Input, Tests) ->
-	lists:all(fun(T) ->
-		T(Input)
-	end, Tests).
 
 infix_symbol() ->
-	DisallowedChars = ordsets:from_list([$', $", $,, $[, $], ${, $}]),
-	{ok, BaseRegEx} = re:compile("[\\pS\\pP]", [unicode, ucp]),
-	Predicate = fun(C) ->
-		pass_all(C, [
-			is_not_element(DisallowedChars),
-			pass_regex(BaseRegEx)
-		])
+	DisallowedSet = ordsets:from_list("'\"[]{}(),"),
+	AllowedRegexTest = "[\\pS\\pP]",
+	{ok, Compiled} = re:compile(AllowedRegexTest, [unicode, ucp]),
+	ChompTest = fun(C) ->
+		case ordsets:is_element(C, DisallowedSet) of
+			true ->
+				false;
+			false ->
+				case re:run([C], Compiled) of
+					{match, _} ->
+						true;
+					nomatch ->
+						false
+				end
+		end
 	end,
-	Chomping = parse:chomp_while(Predicate),
-	parse:tag(infix_symbol, Chomping).
+	ChompP = parse:chomp_while(ChompTest),
+	ValueCheckP = parse:unless(ChompP, fun
+		(<<"=">>) ->
+			{error, solo_equals_not_allowed};
+		(<<".">>) ->
+			{error, solo_dot_not_allowed};
+		(_Passing) ->
+			io:format("yo yo yo I PASS!~p~n", [_Passing]),
+			ok
+	end),
+	parse:tag(infix_symbol, ValueCheckP).
 
 function_name() ->
 	parse:first_of([ function_name_local(), function_name_remote(), function_name_symbol()]).

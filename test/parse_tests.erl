@@ -28,6 +28,12 @@ regex_test_() ->
 	, ?_assertMatch({ok, [<<"hello">>, <<"ello">>, <<"ll">>], <<>>}, parse:it(<<"hello">>, parse:regex("h(e(ll)o)")))
 	].
 
+unless_test_() ->
+	[ ?_assertMatch({error, #{ reason := test }}, parse:it(<<"abc">>, parse:unless(parse:chomp(), fun(_) -> {error, test} end)))
+	, ?_assertMatch({error, #{ reason := {disallowed, $a}}}, parse:it(<<"abc">>, parse:unless(parse:chomp(), fun($a) -> {error, {disallowed, $a}} end)))
+	, ?_assertMatch({ok, $a, <<"bc">>}, parse:it(<<"abc">>, parse:unless(parse:chomp(), fun(_) -> ok end)))
+	].
+
 chomp_test_() ->
 	[ ?_assertMatch({ok, $a, <<"bc">>}, parse:it(<<"abc">>, parse:chomp()))
 	, ?_assertMatch({ok, <<"ab">>, <<"c">>}, parse:it(<<"abc">>, parse:chomp(2)))
@@ -37,6 +43,15 @@ chomp_test_() ->
 	, ?_assertMatch({ok, <<"abc">>, <<>>}, parse:it(<<"abc">>, parse:chomp_while(fun(_) -> true end)))
 	, ?_assertMatch({ok, <<"abc">>, <<"xyz">>}, parse:it(<<"abcxyz">>, parse:chomp_until_end_or(<<"xyz">>)))
 	, ?_assertMatch({ok, <<"abc">>, <<>>}, parse:it(<<"abc">>, parse:chomp_until_end_or(<<"xyz">>)))
+	, ?_assertMatch({ok, <<>>, <<"abc">>}, parse:it(<<"abc">>, parse:chomp_while(fun(E) -> E =:= $z end)))
+	, fun() ->
+		HappyFace = "😀",
+		Subject = unicode:characters_to_binary([HappyFace, $a]),
+		ExpectedChomp = unicode:characters_to_binary(HappyFace),
+		Parser = parse:chomp_while(fun(E) -> E =/= $a end),
+		Result = parse:it(Subject, Parser),
+		?assertMatch({ok, ExpectedChomp, <<"a">>}, Result)
+	end
 	].
 
 peek_test_() ->
@@ -94,7 +109,7 @@ first_of_test_() ->
 	, ?_assertMatch({ok, $c, <<"ba">>}, parse:it(<<"cba">>, ABCParse))
 	, ?_assertMatch({ok, $c, <<"ba">>}, parse:it(<<"cba">>, CBAParse))
 	, ?_assertMatch({ok, $c, <<"ba">>}, parse:it(<<"cba">>, BACParse))
-	, ?_assertMatch({error, #{ reason := nomatch}}, parse:it(<<"xyz">>, ABCParse))
+	, ?_assertMatch({error, #{ reason := {nomatch, _}}}, parse:it(<<"xyz">>, ABCParse))
 	].
 
 series_test_() ->

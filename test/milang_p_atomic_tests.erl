@@ -18,6 +18,6 @@ atomics_test_() ->
 	, ?_assertMatch({ok, {function_name_symbol, _, <<"##&">>}, <<>>}, milang_p_atomic:parse(<<"'##&'">>))
 	, ?_assertMatch({ok, {function_name_symbol, _, <<"==">>}, <<>>}, milang_p_atomic:parse(<<"'=='">>))
 	, ?_assertMatch({ok, {infix_symbol, _, <<"!=">>}, <<>>}, milang_p_atomic:parse(<<"!=">>))
-	, ?_assertMatch({error, #{ reason := solo_equals_not_allowed}}, parse:it(<<"=">>, milang_p_atomic:infix()))
+	, ?_assertMatch({error, #{ reason := {nomatch, _}}}, parse:it(<<"=">>, milang_p_atomic:infix()))
 	, ?_assertMatch({ok, {type_name_remote, _, {module_name, _, <<"A.B">>}, <<"C">>}, <<".">>}, milang_p_atomic:parse(<<"A.B.C.">>))
 	].

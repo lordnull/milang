@@ -28,25 +28,49 @@ upcase_name() ->
 %	milang_p_atomic:downcase_name().
 
 module() ->
-	DeclarationRepeat = parse:lazy(fun() ->
-		parse:repeat_until_error(parse:series([declaration(), space_opt()]))
-	end),
-	Series = parse:series([ space_opt(), DeclarationRepeat, space_opt()]),
-	Mapper = fun([_, DecsWithSpaces, _]) ->
+	DeclarationRepeat = parse:repeat_until_error(parse:series([declaration(), space_opt()])),
+	Series = parse:series([ space_opt(), DeclarationRepeat]),
+	Mapper = fun([_, DecsWithSpaces]) ->
 		[ D || [D, _] <- DecsWithSpaces]
 	end,
 	parse:map(Series, Mapper).
 
 declaration() ->
-	parse:first_of(
-		[ declaration_module()
-		, declaration_import()
-		, declaration_alias()
-		, declaration_type()
-		, declaration_class()
-		, declaration_spec()
-		, declaration_function()
-		]).
+	PeekRegex = "(-module|-import|-alias|-type|-class|[a-z][\\w]*[\\s]*(:)|\'[\\pS\\pP]+\'[\s]*(:)|[\\w]+)",
+	PeekP = parse:peek(PeekRegex),
+	AndThenner = fun
+		([<<"-module">> | _]) ->
+			io:format("blerg ~p~n", [?LINE]),
+			declaration_module();
+		([<<"-import">> | _]) ->
+			io:format("blerg ~p~n", [?LINE]),
+			declaration_import();
+		([<<"-alias">> | _]) ->
+			io:format("blerg ~p~n", [?LINE]),
+			declaration_alias();
+		([<<"-type">> | _]) ->
+			io:format("blerg ~p~n", [?LINE]),
+			declaration_type();
+		([<<"-class">> | _]) ->
+			io:format("blerg ~p~n", [?LINE]),
+			declaration_class();
+		([_, _, <<":">> | _]) ->
+			io:format("blerg ~p~n", [?LINE]),
+			declaration_spec();
+		(_) ->
+			io:format("blerg ~p~n", [?LINE]),
+			declaration_function()
+	end,
+	parse:andThen(PeekP, AndThenner).
+%	parse:first_of(
+%		[ declaration_module()
+%		, declaration_import()
+%		, declaration_alias()
+%		, declaration_type()
+%		, declaration_class()
+%		, declaration_spec()
+%		, declaration_function()
+%		]).
 
 declaration_module() ->
 	SeriesP = parse:series(
