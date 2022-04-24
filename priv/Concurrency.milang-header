@@ -1,0 +1,2 @@
+{<<"Concurrency.Actor.do">>, [{<<"actor">>, [{<<"Concurrency.Actor">>, [undefined, undefined, undefined]}]}.
+{<<"Concurrency.Actor">>, [{<<"error">>, []}, {<<"ok">>, []}, {<<"state">>, []}]}.

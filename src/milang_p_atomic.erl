@@ -10,6 +10,8 @@
 	, whitespace/0
 	, comment_line/0
 	, type_name/0
+	, type_name_local/0
+	, type_name_remote/0
 	, module_name_prefix/0
 	, variable/0
 	, infix/0
@@ -19,6 +21,7 @@
 	, function_name_local/0
 	, list/1
 	, record/2
+	, parens/1
 	]).
 
 parse(Subject) ->
@@ -31,6 +34,14 @@ parse(Subject) ->
 		, module_name_prefix()
 		]),
 	parse:it(Subject, Parser).
+
+parens(Parser) ->
+	parse:lazy(fun() ->
+		SeriesP = parse:series([parse:character($(), space_opt(), Parser, space_opt(), parse:character($))]),
+		parse:map(SeriesP, fun([_, _, Parsed, _, _]) ->
+			Parsed
+		end)
+	end).
 
 list(ElementParser) ->
 	ElementP = parse:lazy(fun() ->
@@ -78,8 +89,8 @@ whitespace() ->
 	parse:regex("\\s+").
 
 comment_line() ->
-	Series = parse:series([parse:string(<<"-doc ">>), parse:regex("[^\\n]*", first)]),
-	Mapper = fun([_, [String]]) ->
+	Series = parse:series([parse:string(<<"-doc">>), parse:regex("[ \\t]+"), parse:regex("[^\\n]*", first)]),
+	Mapper = fun([_, _, [String]]) ->
 		String
 	end,
 	Mapped = parse:map(Series, Mapper),

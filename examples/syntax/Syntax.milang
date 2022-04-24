@@ -1,0 +1,67 @@
+-doc This is a comment. Comments double as documentation. they are considered whitespace. Multiline comments are not supported. Multiple comment lines together in a row are considered 1 comment seperated by the spaces and newlines there were found. A comment is terminated by a newline. A comment is always associated with the lexical touch the follows it at the broadest scope it can. For example, this comment is considered module documetation since directly following it is the module declaration.
+
+-doc The next comment is concated to the previous one, keep the 2 newlines.
+
+-doc All modules must start with a `-module` declaration as the first declaration.
+-module Syntax exposing [].
+
+-doc I'll add to the exposing list as I got. For now, lets add some types.
+
+-doc The simplest type is one that takes no arguments, and has 1 constructor. When there is exactly 1 constructor, it can be the same name as the type.
+
+-type SimpleHello | SimpleHello.
+
+-doc You can define multiple constructors for a type. Note how below we have splits the constructors each to a new line. This does not need to be, as milang is not space sensitive.
+
+-type Number
+	| Int Integer
+	-doc I have purposely misspelled this word. `Float` is an already defined type, and therefore cannot be re-used in this context. Also, note how this comment is done in the middle of the type defintion. It will be associated with the constructor below.
+	| Flote Float
+	.
+
+-doc Types are abstract, meaning you can define 'holes' the get filled in later. The classic example is the `Maybe` type.
+
+-type Maybe a
+	| Just a
+	| Nothing
+	.
+
+-doc To define a function type, we use a slightly different syntax. Below, we define a function that takes no arguments and returns a string.
+
+hello : String.
+
+-doc We can, of course, define functions that take arguments.
+
+add5 : Int -> Int.
+
+-doc And define that some are arguments are abstract, as well as that some arguments are, themselves, functions.
+
+listMap : (a -> b) -> List a -> List b.
+
+-doc which brings us to being able to define types that have functions as parts of the abstract. Note the parenthesis. Those are required. Without them, it would appear to be just a function that takes `Functor a` and returns a `b`, but with no name attached.
+
+-type Functor a b | Functor (a -> b) .
+
+-doc It can sometimes be useful to define an alias for a type. Like a type, an alias can be abstract, taking arguments to be filled in later.
+
+-alias MaybeList a = List (Maybe a).
+
+-doc We can even define an alias in terms of a function.
+
+-alias Inter = Int -> Int -> Int.
+
+-doc We have types, but we need to do something with them. We've got some function definitions, lets add some implementations.
+
+hello -> "hello".
+
+add5 x -> x + 5.
+
+listMap mapper inList ->
+-doc someday the below will be supported.
+-doc	case inList of
+-doc		,[] -> []
+-doc		, a | tail -> mapper a | listMap tail
+-doc		.
+-doc	.
+	List.map mapper inList.
+

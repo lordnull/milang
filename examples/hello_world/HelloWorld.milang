@@ -1,6 +1,7 @@
 -module HelloWorld exposing [, main ] .
 
 -import System.Print exposing [, ln ].
+-import Concurrency exposing [, Actor].
 
 main : List String -> Actor Never Never Never.
 main a ->

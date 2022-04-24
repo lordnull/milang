@@ -2,13 +2,17 @@
 
 -export([parse/1]).
 -export(
-	[ top/0
-	, primary/0
+	[ data/0
+	, function/0
+	, record/0
 	, concrete/0
 	]).
 
 parse(Subject) ->
-	parse:it(Subject, top()).
+	TopP = parse:first_of([concrete(), function(), record(), data()]),
+	Recusive = milang_p_atomic:parens(parse:lazy(fun() -> TopP end)),
+	Parse = parse:first_of([TopP, Recusive]),
+	parse:it(Subject, Parse).
 
 space() ->
 	milang_p_atomic:space().
@@ -16,71 +20,57 @@ space() ->
 space_opt() ->
 	parse:optional(space()).
 
-downcase_name() ->
-	milang_p_atomic:downcase_name().
-
-top() ->
-	HeadP = primary(),
-	TailElementP = parse:lazy(fun() ->
-		parse:series([space_opt(), parse:string(<<"->">>), space_opt(), primary()])
+data() ->
+	TailElementP = parse:map(parse:series([space(), data_arg()]), fun([_, A]) ->
+		A
 	end),
 	TailP = parse:repeat_until_error(TailElementP),
+	HeadP = milang_p_atomic:type_name(),
 	SeriesP = parse:series([HeadP, TailP]),
-	Tagged = parse:tag(type_function, SeriesP),
-	Mapper = fun({_T, _L, [Head, []]}) ->
-		Head;
-		({T, L, [FirstArg, DirtyArgTail]}) ->
-			CleanTail = [A || [_, _, _, A] <- DirtyArgTail],
-			ArgsWithReturn = [FirstArg | CleanTail],
-			[Return | ReversedArgs] = lists:reverse(ArgsWithReturn),
-			Args = lists:reverse(ReversedArgs),
-			{T, L, Args, Return }
-	end,
-	parse:map(Tagged, Mapper).
+	Tagged = parse:tag(type_data, SeriesP),
+	parse:map(Tagged, fun({T, L, [H, Args]}) ->
+		{T, L, H, Args}
+	end).
 
-primary() ->
+data_arg() ->
 	parse:first_of(
-		[parse:lazy(fun concrete/0)
-		,parse:lazy(fun variable/0)
-		,parse:lazy(fun sub/0)
+		[ milang_p_atomic:type_name()
+		, milang_p_atomic:variable()
+		, record()
+		, milang_p_atomic:parens(concrete())
 		]).
 
+function() ->
+	DirtyTailElementP = parse:series([space_opt(), parse:string(<<"->">>), space_opt(), function_arg()]),
+	TailElementP = parse:map(DirtyTailElementP, fun([_, _Arrow, _, Arg]) ->
+		Arg
+	end),
+	TailP = parse:repeat_until_error(TailElementP),
+	SeriesP = parse:series([function_arg(), TailP]),
+	Tagged = parse:tag(type_function, SeriesP),
+	Merged = parse:map(Tagged, fun({T, L, [Head, Tail]}) ->
+		{T, L, [Head | Tail]}
+	end),
+	parse:map(Merged, fun
+		({T, L, [OnlyArg]}) -> OnlyArg;
+		(E) -> E
+	end).
+
+function_arg() ->
+	parse:first_of(
+		[ data()
+		, record()
+		, milang_p_atomic:parens(concrete())
+		, milang_p_atomic:variable()
+		]).
+
+record() ->
+	RecordP = milang_p_atomic:record(parse:first_of([milang_p_atomic:downcase_name(), parse:regex("[1-9][0-9]*")]), concrete()),
+	parse:tag(type_record, RecordP).
+
 concrete() ->
-	ArgElementP = parse:series([space(), type_arg()]),
-	ArgsP = parse:repeat_until_error(ArgElementP),
-	SeriesP = parse:series([milang_p_atomic:type_name(), ArgsP]),
-	Tagged = parse:tag(type_concrete, SeriesP),
-	Mapper = fun({T, L, Series}) ->
-		[BaseName, ArgsWithSpaces] = Series,
-		Args = [Arg || [_, Arg] <- ArgsWithSpaces],
-		{T, L, BaseName, Args}
-	end,
-	parse:map(Tagged, Mapper).
-
-variable() ->
-	parse:tag(type_variable, downcase_name()).
-
-sub() ->
-	SeriesP = parse:series([parse:character($(), space_opt(), top(), space_opt(), parse:character($))]),
-	Mapper = fun([_, _, T, _, _]) ->
-		T
-	end,
-	parse:map(SeriesP, Mapper).
-
-type_arg() ->
-	FirstOf = parse:first_of(
-		[ milang_p_atomic:type_name()
-		, variable()
-		, sub()
-		]),
-	Mapper = fun(Node) ->
-		case Node of
-			{type_name_local, L, _} ->
-				{type_concrete, L, Node, []};
-			{type_name_remote, L, _, _} ->
-				{type_concrete, L, Node, []};
-			_ ->
-				Node
-		end
-	end,
-	parse:map(FirstOf, Mapper).
+	parse:first_of(
+		[ parse:lazy(fun function/0)
+		, parse:lazy(fun record/0)
+		, parse:lazy(fun data/0)
+		]).

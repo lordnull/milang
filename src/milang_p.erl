@@ -121,7 +121,7 @@ exposing_section() ->
 	parse:map(SeriesP, Mapper).
 
 declaration_alias() ->
-	SeriesP = parse:series([parse:string(<<"-alias">>), constraints_section(), space(), milang_p_atomic:upcase_name(), args_list(), space_opt(), parse:character($=), space_opt(), literal_type(), space_opt(), dot()]),
+	SeriesP = parse:series([parse:string(<<"-alias">>), constraints_section(), space(), milang_p_atomic:upcase_name(), args_list(), space_opt(), parse:character($=), space_opt(), milang_p_type:concrete(), space_opt(), dot()]),
 	Tagged = parse:tag(declaration_alias, SeriesP),
 	Mapped = fun({T, L, Series}) ->
 		[_, Constraints, _, Name, Args, _, _Equals, _, Original, _, _Dot] = Series,
@@ -142,24 +142,13 @@ constructors() ->
 	parse:repeat(1, infinity, constructor_element()).
 
 constructor_element() ->
-	SeriesP = parse:series([space_opt(), parse:character($|), space_opt(), upcase_name(), constructor_args()]),
+	SeriesP = parse:series([space_opt(), parse:character($|), space_opt(), milang_p_type:data()]),
 	Tagged = parse:tag(type_constructor, SeriesP),
 	Mapper = fun({T, L, Series}) ->
-		[_, _, _, Name, Args] = Series,
-		{T, L, Name, Args}
+		[_, _Pipe, _, Data] = Series,
+		{T, L, Data}
 	end,
 	parse:map(Tagged, Mapper).
-
-constructor_args() ->
-	SeriesP = parse:series([space(), constructor_arg()]),
-	RepeatP = parse:repeat_until_error(SeriesP),
-	Mapped = fun(Args) ->
-		[A || [_, A] <- Args]
-	end,
-	parse:map(RepeatP, Mapped).
-
-constructor_arg() ->
-	parse:first_of([ milang_p_type:primary(), type_literal_record()]).
 
 declaration_class() ->
 	ClassMembersP = class_members(),
@@ -185,7 +174,7 @@ class_member() ->
 
 class_member_definition() ->
 	NameP = parse:first_of([milang_p_atomic:function_name_local(), milang_p_atomic:function_name_symbol()]),
-	SeriesP = parse:series([NameP, space_opt(), parse:character($:), space_opt(), milang_p_type:top()]),
+	SeriesP = parse:series([NameP, space_opt(), parse:character($:), space_opt(), milang_p_type:function()]),
 	Tagged = parse:tag(class_member, SeriesP),
 	Mapper = fun({T, L, [Name, _, _Colon, _, Def]}) ->
 		{T, L, Name, Def}
@@ -225,7 +214,7 @@ function_bindings() ->
 
 declaration_spec() ->
 	NameP = parse:first_of([milang_p_atomic:function_name_local(), milang_p_atomic:function_name_symbol()]),
-	SeriesP = parse:series([NameP, space_opt(), parse:character($:), space_opt(), milang_p_type:top(), space_opt(), dot()]),
+	SeriesP = parse:series([NameP, space_opt(), parse:character($:), space_opt(), milang_p_type:function(), space_opt(), dot()]),
 	Tagged = parse:tag(declaration_spec, SeriesP),
 	Mapper = fun({T, L, [Name, _, _Colon, _, Def, _, _Dot]}) ->
 		{T, L, Name, Def}
@@ -252,37 +241,3 @@ args_list() ->
 	end,
 	parse:map(Repeat, Mapper).
 
-literal_type() ->
-	parse:first_of([milang_p_type:top(), type_literal_record()]).
-
-type_literal_record() ->
-	KeyParser = milang_p_expression:record_field_key(),
-	ValueParser = parse:lazy(fun literal_type/0),
-	RecordP = milang_p_atomic:record(KeyParser, ValueParser),
-	parse:tag(type_literal_record, RecordP).
-
-
-%%
-%exposing_list <- '[' (space? exposing_item)* space? ']' `
-%	[_, DirtyElements, _, _] = Node,
-%	Elements = [E || [_, E] <- DirtyElements],
-%	{exposing, simple_idx(Idx), Elements}
-%`;
-%
-%exposing_item <- ',' space? (upcase_name / local_function_name) `
-%	[_, _, Elem] = Node,
-%	Elem
-%`;
-%
-%declaration_seperator <- '.' ~;
-%
-%%list_seperator <- ',' ~;
-%
-%%%@import milang_expression.ppeg
-%
-%%%@import milang_atomic.ppeg
-%
-%%%@import milang_type.ppeg
-%
-%%%@append milang_helpers.hrl
-%

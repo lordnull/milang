@@ -88,20 +88,12 @@ find_file(BaseName, [Dir | Tail]) ->
 compile(#{ input_file := InFile, output_file := OutFile, search_dirs := _SearchDirs }) ->
 	case milang_parse:file(InFile) of
 		{ok, AST} ->
-			write_ast(OutFile, AST);
+			milang_compile:compile(AST, [{input_file_name, InFile}, {output_file_name, OutFile}]);
 		Error ->
 			io:format("Parsing error:~n~p~n", [Error]),
 			halt(2)
 	end.
 
-write_ast(OutFile, AST) ->
-	case file:open(OutFile, [write, binary]) of
-		{ok, OutHandle} ->
-			io:format(OutHandle, "~p", [AST]);
-		Error ->
-			io:format("Error writing output file:~n~p~n", [Error]),
-			halt(3)
-	end.
 
 
 input_args() ->
