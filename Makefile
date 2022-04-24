@@ -8,3 +8,6 @@ include erlang.mk
 
 ESCRIPT_NAME = milangc
 ESCRIPT_FILE = milangc
+
+escript-zip::
+	$(verbose) $(ESCRIPT_ZIP) $(ESCRIPT_ZIP_FILE) system_headers/*

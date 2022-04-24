@@ -12,6 +12,7 @@ main(Args) ->
 			help(),
 			halt(1);
 		{ok, Options} ->
+			ok = setup_work_enviroment(),
 			compile(Options)
 	end.
 
@@ -83,6 +84,39 @@ find_file(BaseName, [Dir | Tail]) ->
 			{ok, Joined};
 		false ->
 			find_file(BaseName, Tail)
+	end.
+
+setup_work_enviroment() ->
+	ok = make_dir_or_die("./milang-work-dir"),
+	HeadersDir = filename:join("milang-work-dir", "headers"),
+	ok = make_dir_or_die(HeadersDir),
+	Myself = escript:script_name(),
+	{ok, ExtractedEscript} = escript:extract(Myself, []),
+	Archive = proplists:get_value(archive, ExtractedEscript),
+	FolderFun = fun(Filename, _GetInfo, GetBin, ok) ->
+		case Filename of
+			"system_headers/" ++ HeaderName ->
+				case file:write_file(filename:join(HeadersDir, HeaderName), GetBin()) of
+					ok ->
+						ok;
+					{error, Error} ->
+						throw({uanble_to_write_system_header, HeaderName, Error})
+				end;
+			_ ->
+				ok
+		end
+	end,
+	{ok, ok} = zip:foldl(FolderFun, ok, {Myself, Archive}),
+	ok.
+
+make_dir_or_die(Dir) ->
+	case file:make_dir(Dir) of
+		ok ->
+			ok;
+		{error, eexist} ->
+			ok;
+		{error, Error} ->
+			error({dir_not_usable, Error})
 	end.
 
 compile(#{ input_file := InFile, output_file := OutFile, search_dirs := _SearchDirs }) ->
