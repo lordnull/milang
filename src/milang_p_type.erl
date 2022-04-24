@@ -52,7 +52,7 @@ function() ->
 		{T, L, [Head | Tail]}
 	end),
 	parse:map(Merged, fun
-		({T, L, [OnlyArg]}) -> OnlyArg;
+		({_T, _L, [OnlyArg]}) -> OnlyArg;
 		(E) -> E
 	end).
 
