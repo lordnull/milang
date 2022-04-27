@@ -1,2 +1,3 @@
-{<<"Concurrency.Actor.do">>, [{<<"actor">>, [{<<"Concurrency.Actor">>, [undefined, undefined, undefined]}]}.
-{<<"Concurrency.Actor">>, [{<<"error">>, []}, {<<"ok">>, []}, {<<"state">>, []}]}.
+{'Concurrency.do', {function, 'Concurrency.do', 'Concurrency', 'do', [{type, 'Concurrency.Actor'}, 'error', 'ok', 'state']}}.
+{'Concurrency.Actor', {data, 'Concurrency.Actor', ['error', 'ok', 'state']}}.
+{'Concurrency.Task', {data, 'Concurrency.Task', ['error', 'ok']}}.

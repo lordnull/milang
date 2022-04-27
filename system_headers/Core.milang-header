@@ -1,4 +1,4 @@
-{<<"String">>, []}.
-{<<"Unit">>, []}.
-{<<"Never">>, []}.
-{<<"List">>, [{<<"element">>, []}]}.
+{'String', {type, 'String', [], []}}.
+{'Unit', {type, 'Unit', [], []}}.
+{'Never', {type, 'Never', [], ['Never']}}.
+{'List', {type, 'List', [], ['element']}}.

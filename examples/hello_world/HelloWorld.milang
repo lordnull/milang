@@ -1,8 +1,8 @@
 -module HelloWorld exposing [, main ] .
 
 -import System.Print exposing [, ln ].
--import Concurrency exposing [, Actor].
+-import Concurrency.
 
 main : List String -> Actor Never Never Never.
-main a ->
-	Actor.do (ln "Hello, World!").
+main _ ->
+	Concurrency.do (ln "Hello, World!").

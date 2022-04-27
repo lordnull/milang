@@ -64,7 +64,7 @@ declaration_module() ->
 		, space()
 		, parse:string(<<"exposing">>)
 		, space_opt()
-		, parse:optional(exposing_list())
+		, exposing_list()
 		, space_opt()
 		, dot()
 		]),
@@ -98,7 +98,11 @@ declaration_import() ->
 		, dot()
 		]),
 	Tagged = parse:tag(declaration_import, SeriesP),
-	Mapper = fun({T, L, [_, _, Module, Alias, Exposing, _, _]}) ->
+	Mapper = fun({T, L, [_, _, Module, Alias, MaybeExposing, _, _]}) ->
+		Exposing = case MaybeExposing of
+			[] -> [];
+			[E] -> E
+		end,
 		{T, L, Module, Alias, Exposing}
 	end,
 	parse:map(Tagged, Mapper).

@@ -122,7 +122,9 @@ module_name_prefix() ->
 	parse:tag(module_name, Mapped).
 
 variable() ->
-	parse:tag(variable, downcase_name()).
+	RegEx = parse:regex("[\\p{Ll}_]\\w*", first),
+	Mapped = parse:map(RegEx, fun([V]) -> V end),
+	parse:tag(variable, Mapped).
 
 infix() ->
 	parse:first_of([ infix_notation(), infix_symbol() ]).

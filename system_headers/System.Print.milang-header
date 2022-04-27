@@ -1,1 +1,1 @@
-{<<"System.Print.ln">>, [{<<"String">>, []}, {<<"Task">>, [{<<"Never">>, []}, {<<"Unit">>, []}]}]}.
+{'System.Print.ln', {function, 'System.Print.ln', 'System.Print', 'ln', [{concrete, 'String', []}, {concrete, 'Concurrency.Task', [{concrete, 'Never', []}, {concrete, 'Unit', []}]}]}}.
