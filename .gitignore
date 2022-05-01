@@ -3,3 +3,16 @@ deps
 *.plt
 .erlang.mk/
 milang.d
+
+# os specific files
+.DS_STORE
+
+# files generated via make, copied from elsewhere.
+/archive_support
+/archive_support
+/system_headers
+/priv/archive_support/milang_curry.beam
+
+# build artifacts
+milangc
+milang-work-dir

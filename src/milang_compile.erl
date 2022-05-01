@@ -27,7 +27,8 @@
 	errors = [],
 	module_name,
 	function_exports = [],
-	type_exports = []
+	type_exports = [],
+	support_modules = []
 }).
 
 -record(stack_frame, {
@@ -69,7 +70,8 @@ compile(AST, Options) when is_list(Options) ->
 		errors = []
 	},
 	FinalState = compile(AST, [], CompileState),
-	io:format("Final state: ~p~n", [FinalState]).
+	ok = io:format("Final state: ~p~n", [FinalState]),
+	ok = milang_archive:build([FinalState#compile_state.module_name | FinalState#compile_state.support_modules], [{work_dir, WorkDir}, {output_file, OutputFile}]).
 
 log(BaseFmt, Args) ->
 	io:format(BaseFmt ++ "~n", Args).
@@ -208,7 +210,8 @@ compile({declaration_import, Location, Module, Alias, Imports} = Dec, Stack, Sta
 			end),
 			receive
 				{'DOWN', Ref, process, Pid, normal} ->
-					compile(Dec, Stack, State);
+					NewState = add_module_to_support(Module, State),
+					compile(Dec, Stack, NewState);
 				{'DOWN', Ref, process, Pid, NotNormal} ->
 					exit(NotNormal)
 			end;
@@ -218,7 +221,8 @@ compile({declaration_import, Location, Module, Alias, Imports} = Dec, Stack, Sta
 			end, State, [
 				fun(S) -> load_module_header(Header, S) end,
 				fun(S) -> add_module_alias(Alias, Header, S) end,
-				fun(S) -> add_module_imports(Module, Imports, Header, S) end
+				fun(S) -> add_module_imports(Module, Imports, Header, S) end,
+				fun(S) -> add_module_to_support(Module, S) end
 			]),
 			compile([], Stack, NewState)
 	end;
@@ -368,6 +372,11 @@ add_module_imports(Module, Imports, _Header, State) ->
 				add_error(Location, {error_adding_lookup, Error}, Acc)
 		end
 	end, State, Imports).
+
+add_module_to_support(ModuleName, State) ->
+	OldSupport = State#compile_state.support_modules,
+	NewSupport = [ModuleName | OldSupport],
+	State#compile_state{ support_modules = NewSupport}.
 
 find_module(ModuleName, WorkDir, SearchDirs) ->
 	HeaderName = unicode:characters_to_binary([ModuleName, ".milang-header"]),
