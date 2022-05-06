@@ -32,8 +32,7 @@ add_bootstrap(MainModule, WorkDir) ->
 	ok = io:format("BootstrapFile: ~s~n", [BootstrapFile]),
 	ok = file:write_file(BootstrapFile, boostrap_module_src()),
 	ok = io:format("MainModule: ~s~n", [MainModule]),
-	ok = io:format("MainModule as atom: ~s~n", [binary_to_atom(MainModule, utf8)]),
-	{ok, _, Beam} = compile:noenv_file(BootstrapFile, [binary, debug_info, {d, 'MILANG_BOOT_MODULE', binary_to_atom(MainModule, utf8)}]),
+	{ok, _, Beam} = compile:noenv_file(BootstrapFile, [binary, debug_info, {d, 'MILANG_BOOT_MODULE', MainModule}]),
 	{"milang_bootstrap.beam", Beam}.
 
 boostrap_module_src() ->
@@ -45,9 +44,9 @@ boostrap_module_src() ->
 "	Stack = ?MILANG_BOOT_MODULE:main(),\n"
 "	milang_curry:call(Stack, [Args]).\n".
 
-build_beam(<<"Concurrency">>, _) ->
+build_beam('Concurrency', _) ->
 	code:get_object_code('Concurrency');
-build_beam(<<"System.Print">>, _) ->
+build_beam('System.Print', _) ->
 	code:get_object_code('System.Print');
 build_beam(BaseFile, WorkDir) ->
 	File = filename:join([WorkDir, BaseFile]),

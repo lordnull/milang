@@ -12,7 +12,7 @@
 	]).
 -export(
 	[ constructor/3
-	, data/3
+	, type/3
 	, function/2
 	, concrete/2
 	, alias/3
@@ -51,8 +51,6 @@
 
 -record(function, {
 	name,
-	modue_name,
-	local_name,
 	types = []
 }).
 
@@ -67,16 +65,19 @@
 
 -type type_entry() :: #constructor{} | #type{} | #function{} | #concrete{} | #alias{}.
 
--type lookup_table() :: [ #{ atom() => type_entry()} ].
+-type lookup_table() :: nonempty_list( #{ atom() => type_entry()} ).
 
 -export_type([type_entry/0, lookup_table/0]).
 
+-spec new() -> lookup_table().
 new() ->
-	new_scope([]).
+	[#{}].
 
+-spec new_scope(lookup_table()) -> lookup_table().
 new_scope(OldTable) ->
 	[#{} | OldTable].
 
+-spec pop_scope(lookup_table()) -> lookup_table().
 pop_scope([]) ->
 	error(somehow_no_table_at_all);
 pop_scope([_]) ->
@@ -84,6 +85,7 @@ pop_scope([_]) ->
 pop_scope([_ | Tail]) ->
 	Tail.
 
+-spec resolve_function_name(atom(), lookup_table()) -> {ok, #function{}} | {error, notfound} | {error, {not_function, type_entry()}}.
 resolve_function_name(LocalName, Table) ->
 	case lookup(LocalName, Table) of
 		{error, _} = E ->
@@ -92,20 +94,22 @@ resolve_function_name(LocalName, Table) ->
 			Ok;
 		{ok, #alias{alias_type = function_name_remote} = A} ->
 			resolve_function_name(A#alias.truname, Table);
-		{ok, _} ->
-			{error, not_function}
+		{ok, Wut} ->
+			{error, {not_function, Wut}}
 	end.
 
-lookup(_Name, []) ->
-	{error, notfound};
+-spec lookup(atom(), lookup_table()) -> {error, notfound} | {ok, type_entry()}.
 lookup(Name, [Table | Tail]) ->
 	case maps:find(Name, Table) of
+		error when Tail =:= [] ->
+			{error, notfound};
 		error ->
 			lookup(Name, Tail);
 		{ok, _} = Ok ->
 			Ok
 	end.
 
+-spec add_entry(atom(), type_entry(), lookup_table()) -> {ok, lookup_table()} | {error, {shadowing, atom(), type_entry()}}.
 add_entry(Name, Entry, Table) ->
 	case lookup(Name, Table) of
 		{error, notfound} ->
@@ -116,18 +120,22 @@ add_entry(Name, Entry, Table) ->
 			{error, {shadowing, Name, Entry}}
 	end.
 
+-spec constructor(atom(), atom(), [ type_entry() ]) -> #constructor{}.
 % the Just a | Nothing from Maybe a for example.
 constructor(Name, Parent, Args) ->
 	{constructor, Name, Parent, Args}.
 
+-spec type(atom(), [ type_entry() ], [atom()]) -> #type{}.
 % the Maybe a itself.
-data(Name, Constraints, ArgNames) ->
+type(Name, Constraints, ArgNames) ->
 	{type, Name, Constraints, ArgNames}.
 
+-spec function(atom(), [ type_entry() ]) -> #function{}.
 % function specs, or an argument to a a construtor or data.
 function(Name, Types) ->
 	{function, Name, Types}.
 
+-spec concrete(atom(), [type_entry()]) -> #concrete{}.
 % Maybe Int, the variable for Maybe a defined.
 concrete(Name, Args) ->
 	{concrete, Name, Args}.

@@ -2,7 +2,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-the_test_() ->
+the_test_d() ->
 	[ ?_assertMatch({ok, {type_data, _, {type_name_local, _, <<"Jim">>}, []}, <<>>}, milang_p_type:parse(<<"Jim">>))
 	, ?_assertMatch({ok, {type_data, _, {type_name_remote, _, _, <<"Jim">>}, []}, <<>>}, milang_p_type:parse(<<"Extra.Name.Jim">>))
 	, ?_assertMatch({ok, {variable, _, <<"a">>}, <<>>}, milang_p_type:parse(<<"a">>))

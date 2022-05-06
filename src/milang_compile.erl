@@ -36,6 +36,7 @@
 	ast
 	}).
 
+-spec compile(nonempty_list(milang_ast:ast_node()), options()) -> ok.
 compile([], Options) when is_list(Options) ->
 	error(no_ast);
 
@@ -149,15 +150,17 @@ compile([], [AST | NewStack], State) ->
 compile([AST | Tail], Stack, State) ->
 	compile(AST, [Tail | Stack], State);
 compile(#stack_frame{ ast = _AST, output_buffer = Bytes}, [Tail | NewStack], #compile_state{errors = []} = State) ->
-	OutHandle = State#compile_state.output_file_handle,
-	ok = io:put_chars(OutHandle, Bytes),
+	ok = write_to_outfile(State, Bytes),
 	compile(Tail, NewStack, State);
 compile(#stack_frame{}, [Tail | NewStack], State) ->
 	compile(Tail, NewStack, State);
-compile({declaration_module, Location, _, _}, Stack, #compile_state{ module_name = ModName} = State) when ModName =/= undefined ->
+compile(#{ type := declaration_module} = Node, Stack, #compile_state{ module_name = ModName} = State) when ModName =/= undefined ->
+	Location = maps:get(location, Node),
 	NewState = add_error(Location, multiple_module_declarations, State),
 	compile([], Stack, NewState);
-compile({declaration_module, _Location, Name, Exports}, Stack, CompileState) ->
+compile(#{ type := declaration_module} = Node, Stack, CompileState) ->
+	Data = maps:get(data, Node),
+	#{ name := Name, exposing := Exports} = Data,
 	NewState = declaration_module(Name, Exports, CompileState),
 	ModuleName = NewState#compile_state.module_name,
 	Functions = NewState#compile_state.function_exports,
@@ -165,35 +168,39 @@ compile({declaration_module, _Location, Name, Exports}, Stack, CompileState) ->
 	OutputFmt = "-module('~s').~n"
 	"-export([~s]).~n"
 	"-export_type([~s]).~n~n",
-	FunctionExportsList = [io_lib:format("'~s'/0~n", [N]) || {_, _, N} <- Functions],
+	FunctionExportsList = [io_lib:format("'~s'/0~n", [milang_ast:data(A)]) || A <- Functions],
 	FunctionExprts = lists:join($,, FunctionExportsList),
-	TypeExportsList = [io_lib:format("'~s'/0~n", [N]) || {_, _, N} <- Types],
+	TypeExportsList = [ io_lib:format("'~s'/0~n", [milang_ast:data(A)]) || A <- Types],
 	TypeExports = lists:join($,, TypeExportsList),
 	Output = io_lib:format(OutputFmt, [ModuleName, FunctionExprts, TypeExports]),
-	ok = io:put_chars(NewState#compile_state.output_file_handle, Output),
+	ok = write_to_outfile(NewState, Output),
 	compile([], Stack, NewState);
-compile(Declaration, Stack, #compile_state{module_name = undefined, errors = []} = CompileState) ->
+compile(Declaration, Stack, #compile_state{module_name = undefined, errors = []} = CompileState) when is_map(Declaration) ->
 	NewState = add_error(element(2, Declaration), {module_declaration_must_be_first, Declaration}, CompileState),
 	compile(Declaration, Stack, NewState);
-compile({declaration_spec, _Location, Name, Spec}, Stack, State) ->
+compile(#{ type := declaration_spec } = Node, Stack, State) ->
+	#{ name := Name, spec := Spec} = maps:get(data, Node),
 	NewState = add_to_lookup_table(Name, Spec, State),
 	compile([], Stack, NewState);
-compile({declaration_function, _Location, Name, Args, Bindings, Body} = AST, Stack, State) ->
+compile(#{ type := declaration_function } = AST, Stack, State) ->
+	#{ name := Name, args := Args, bindings := Bindings, expression := Body} = maps:get(data, AST),
 	StateWithFunc = maybe_add_function(Name, Args, State),
 	ArgsShadowState = add_shadow_errors(Args, StateWithFunc),
 	BindingsShadowState = add_shadow_errors(Bindings, ArgsShadowState),
-	OutputFile = BindingsShadowState#compile_state.output_file_handle,
 	Arity = length(Args),
-	{function_name_local, _, LocalName} = Name,
+	#{type := function_name_local, data := LocalName} = milang_ast:to_map(Name),
 	Exported = io_lib:format("'~s'() -> milang_curry:stack(fun ~s/~p).~n~n", [LocalName, LocalName, Arity]),
-	ok = io:put_chars(OutputFile, Exported),
-	ArgsList = [milang_arg_to_erlang_arg(ArgName) || {variable, _, ArgName} <- Args],
+	ok = write_to_outfile(BindingsShadowState, Exported),
+	ok = log("ye old args: ~p", [Args]),
+	ArgsList = [milang_arg_to_erlang_arg(A) || A <- Args],
 	ArgsJoined = lists:join($,, ArgsList),
 	FunctionHead = io_lib:format("'~s'(~s) ->~n", [LocalName, ArgsJoined]),
-	ok = io:put_chars(OutputFile, FunctionHead),
+	ok = write_to_outfile(BindingsShadowState, FunctionHead),
 	Frame = #stack_frame{ ast = AST, output_buffer = ".\n"},
 	compile(Body, [Frame | Stack], BindingsShadowState);
-compile({declaration_import, Location, Module, Alias, Imports} = Dec, Stack, State) ->
+compile(#{ type := declaration_import } = Dec, Stack, State) ->
+	#{ location := Location, data := Data} = Dec,
+	#{ name := Module, alias := Alias, exposing := Imports} = Data,
 	case find_module(Module, State#compile_state.work_dir, State#compile_state.search_dirs) of
 		{error, _} ->
 			NewState = add_error(Location, {cannot_find_module, Module}, State),
@@ -210,8 +217,9 @@ compile({declaration_import, Location, Module, Alias, Imports} = Dec, Stack, Sta
 			end),
 			receive
 				{'DOWN', Ref, process, Pid, normal} ->
-					NewState = add_module_to_support(Module, State),
-					compile(Dec, Stack, NewState);
+					% I know I'm risking an infite loop here, but for now I
+					% want the header file reading to be the source of truth.
+					compile(Dec, Stack, State);
 				{'DOWN', Ref, process, Pid, NotNormal} ->
 					exit(NotNormal)
 			end;
@@ -226,16 +234,21 @@ compile({declaration_import, Location, Module, Alias, Imports} = Dec, Stack, Sta
 			]),
 			compile([], Stack, NewState)
 	end;
-compile({call, _, CallName, Args} = AST, Stack, State) ->
+compile(#{ type := expression_call } = AST, Stack, State) ->
+	#{ name := CallNameAST, args := Args} = maps:get(data, AST),
+	CallName = milang_ast:to_map(CallNameAST),
 	{ModPart, FuncPart} = case CallName of
-		{function_name_remote, _, ModuleNameAST, Name} ->
-			{module_name, _, ModuleName} = ModuleNameAST,
-			{[$', ModuleName, $', $:], Name};
-		{function_name_local, _, LocalName} ->
-			case milang_type_validation:resolve_function_name(binary_to_atom(LocalName, utf8), State#compile_state.lookup_table) of
+		#{ type := function_name_remote, data := Data} ->
+			#{ name := Name, module := ModuleName } = Data,
+			{[$', atom_to_binary(ModuleName), $', $:], Name};
+		#{ type := function_name_local, data := LocalName } ->
+			case milang_type_validation:resolve_function_name(LocalName, State#compile_state.lookup_table) of
 				{ok, Resolved} ->
-					{function, _, M, F, _} = Resolved,
-					{[$', atom_to_binary(M), $', $:], F};
+					{function, Name, _} = Resolved,
+					function_name_to_mf(Name);
+				{error, {not_function, Wut}} ->
+					log("~s resolved, but is not a function.~nWut: ~p~nState: ~p", [LocalName, Wut, State]),
+					error({not_function, LocalName});
 				{error, notfound} ->
 					log("Could not resolve ~s, assuming it's a local call.", [LocalName]),
 					{"", LocalName}
@@ -246,11 +259,12 @@ compile({call, _, CallName, Args} = AST, Stack, State) ->
 	FinalFrame = #stack_frame{ast = AST, output_buffer = ")\n"},
 	NewStack = JoinedArgs ++ [ FinalFrame] ++ Stack,
 	Chars = io_lib:format("~s~s(", [ModPart, FuncPart]),
-	ok = io:put_chars(State#compile_state.output_file_handle, Chars),
+	ok = write_to_outfile(State, Chars),
 	compile([], NewStack, State);
-compile({literal_string, _, String}, Stack, State) ->
+compile(#{ type := literal_string } = Node, Stack, State) ->
+	String = maps:get(data, Node),
 	Chars = io_lib:format("<<\"~s\">>", [String]),
-	ok = io:put_chars(State#compile_state.output_file_handle, Chars),
+	ok = write_to_outfile(State, Chars),
 	compile([], Stack, State);
 %compile({call, _, _, _} = AST, Stack, State) ->
 %	NewState = compile_call(AST, State),
@@ -259,6 +273,8 @@ compile({literal_string, _, String}, Stack, State) ->
 %	compile([], Stack, State);
 %compile({function_name_remote, _, _, _}, Stack, State) ->
 %	compile([], Stack, State);
+compile(MilangAST, Stack, CompileState) when is_tuple(MilangAST) ->
+	compile(milang_ast:to_map(MilangAST), Stack, CompileState);
 compile(Wut, Stack, CompileState) ->
 	error({nyi, Wut, Stack, CompileState}).
 
@@ -284,12 +300,26 @@ compile(Wut, Stack, CompileState) ->
 %compile_call(Wut, _Stack, State) ->
 %	error({call_wut, Wut, State}).
 
+write_to_outfile(#compile_state{ output_file_handle = undefined}, _) -> ok;
+write_to_outfile(#compile_state{ output_file_handle = Fd}, Chars) ->
+	io:put_chars(Fd, Chars).
+
+milang_arg_to_erlang_arg(AST) when is_tuple(AST) ->
+	case milang_ast:type(AST) of
+		variable ->
+			milang_arg_to_erlang_arg(milang_ast:data(AST));
+		_ ->
+			error({nyi, argument_type, AST})
+	end;
+milang_arg_to_erlang_arg(Atom) when is_atom(Atom) ->
+	milang_arg_to_erlang_arg(atom_to_binary(Atom));
 milang_arg_to_erlang_arg(<<$_, _/binary>> = Arg) ->
 	Arg;
 milang_arg_to_erlang_arg(Arg) ->
 	[$A, Arg].
 
-maybe_add_function({function_name_local, Location, Name} = AST, _ArgsList, State) ->
+maybe_add_function(AST, _ArgsList, State) ->
+	#{ type := function_name_local, location := Location, data := Name} = milang_ast:to_map(AST),
 	LookupTable = State#compile_state.lookup_table,
 	% TODO construct a proper entry to give to the type validator.
 	case milang_type_validation:refine(Name, undefined, LookupTable) of
@@ -316,10 +346,13 @@ maybe_close_outfile(State) ->
 	State#compile_state{ output_file_handle = undefined }.
 
 declaration_module(Name, Exports, State) ->
-	{Functions, Types} = lists:partition(fun({function_name_local, _, _}) ->
-		true;
-		({type_name_local, _, _}) -> false
-	end, Exports),
+	PartitionFun = fun(Node) ->
+		case milang_ast:type(Node) of
+			function_name_local -> true;
+			type_name_local -> false
+		end
+	end,
+	{Functions, Types} = lists:partition(PartitionFun, Exports),
 	State#compile_state{ module_name = Name, function_exports = Functions, type_exports = Types}.
 
 add_to_lookup_table(NameAtomic, TypeInfo, State) ->
@@ -334,10 +367,10 @@ add_to_lookup_table(NameAtomic, TypeInfo, State) ->
 	end.
 
 
-load_module_header(HeaderTerms, State) ->
-	lists:foldl(fun add_header_term/2, State, HeaderTerms).
+load_module_header(HeaderMap, State) ->
+	maps:fold(fun add_header_entry/3, State, HeaderMap).
 
-add_header_term({Name, Entry}, State) ->
+add_header_entry(Name, Entry, State) ->
 	LookupTable = State#compile_state.lookup_table,
 	case milang_type_validation:add_entry(Name, Entry, LookupTable) of
 		{ok, NewTable} ->
@@ -353,25 +386,26 @@ add_module_alias(Alias, Header, State) ->
 
 add_module_imports(Module, Imports, _Header, State) ->
 	lists:foldl(fun(Import, Acc) ->
-		Table = State#compile_state.lookup_table,
-		{Location, EntryNameBin, EntryType} = case Import of
-			{function_name_local, L, N} ->
-				{L, N, function_name_remote};
-			{type_name_local, L, N} ->
-				{L, N, type_name_remote};
-			_ ->
-				error({invalid_import, Import})
-		end,
-		EntryName = binary_to_atom(EntryNameBin, utf8),
-		TrueName = binary_to_atom(unicode:characters_to_binary([Module, $., EntryNameBin])),
-		Entry = milang_type_validation:alias(EntryName, EntryType, TrueName),
-		case milang_type_validation:add_entry(EntryName, Entry, Table) of
-			{ok, NewTable} ->
-				Acc#compile_state{ lookup_table = NewTable};
-			{error, Error} ->
-				add_error(Location, {error_adding_lookup, Error}, Acc)
-		end
+		add_module_import(Module, Import, State#compile_state.lookup_table, Acc)
 	end, State, Imports).
+
+add_module_import(Module, Import, Table, Acc) ->
+	ImportAsMap = milang_ast:to_map(Import),
+	Type = maps:get(type, ImportAsMap),
+	EntryType = case Type of
+		function_name_local -> function_name_remote;
+		type_name_local -> type_name_remote;
+		_ -> error({invalid_import, Import})
+	end,
+	#{ location := Location, data := EntryName } = ImportAsMap,
+	TrueName = binary_to_atom(unicode:characters_to_binary(io_lib:format("~s.~s", [Module, EntryName]))),
+	Entry = milang_type_validation:alias(EntryName, EntryType, TrueName),
+	case milang_type_validation:add_entry(EntryName, Entry, Table) of
+		{ok, NewTable} ->
+			Acc#compile_state{ lookup_table = NewTable};
+		{error, Error} ->
+			add_error(Location, {error_adding_lookup, Error}, Acc)
+	end.
 
 add_module_to_support(ModuleName, State) ->
 	OldSupport = State#compile_state.support_modules,
@@ -379,13 +413,15 @@ add_module_to_support(ModuleName, State) ->
 	State#compile_state{ support_modules = NewSupport}.
 
 find_module(ModuleName, WorkDir, SearchDirs) ->
-	HeaderName = unicode:characters_to_binary([ModuleName, ".milang-header"]),
+	ModuleNameStr = atom_to_binary(ModuleName),
+	HeaderName = unicode:characters_to_binary([ModuleNameStr, ".milang-header"]),
 	FullHeaderName = filename:join([WorkDir, "headers", HeaderName]),
-	case file:consult(FullHeaderName) of
+	case milang_header:read_header_file(FullHeaderName) of
 		{ok, _} = Ok ->
 			Ok;
-		_Error ->
-			SourceName = unicode:characters_to_binary([ModuleName, ".milang"]),
+		Error ->
+			ok = log("Error reading header ~s. Trying to get the source. Error: ~p", [FullHeaderName, Error]),
+			SourceName = unicode:characters_to_binary([ModuleNameStr, ".milang"]),
 			case file:path_open(["." | SearchDirs], SourceName, [read]) of
 				{ok, Handle, FullName} ->
 					ok = file:close(Handle),
@@ -393,4 +429,15 @@ find_module(ModuleName, WorkDir, SearchDirs) ->
 				Error ->
 					Error
 			end
+	end.
+
+function_name_to_mf(Name) ->
+	BinStr = atom_to_binary(Name, utf8),
+	case binary:split(BinStr, <<$.>>, [global]) of
+		[FunctionPart] ->
+			{"", FunctionPart};
+		Split ->
+			[FunctionPart | ReversedModule] = lists:reverse(Split),
+			ModulePart = lists:join($., lists:reverse(ReversedModule)),
+			{[$', ModulePart, $', $:], FunctionPart}
 	end.

@@ -12,7 +12,7 @@ main(Args) ->
 			help(),
 			halt(1);
 		{ok, Options} ->
-			ok = setup_work_enviroment(),
+			ok = setup_work_enviroment(Options),
 			compile(Options)
 	end.
 
@@ -42,9 +42,7 @@ build_option_map([], #{ input_file := Input } = Opts) ->
 			OutputFile = get_output_file(Opts, InputActual),
 			{ok, Opts#{ input_file => InputActual, output_file => OutputFile, search_dirs => CorrectedSearchDirs}};
 		{error, notfound} ->
-			{error, input_file_not_found};
-		{error, Posix} ->
-			{error, {input_file, Posix}}
+			{error, input_file_not_found}
 	end;
 build_option_map([], _Opts) ->
 	{error, missing_input_file};
@@ -52,15 +50,21 @@ build_option_map([{help, _} | Tail], Acc) ->
 	build_option_map(Tail, Acc);
 build_option_map([{input_file, _} | _], #{ input_file := _ }) ->
 	{error, multiple_input_files};
-build_option_map([{output_file, _} | _], #{ output_file := _}) ->
-	{error, multiple_output_files};
 build_option_map([{input_file, In} | Tail], Acc) ->
 	build_option_map(Tail, Acc#{ input_file => In });
 build_option_map([{output_file, Out} | Tail], Acc) ->
 	build_option_map(Tail, Acc#{ output_file => Out});
 build_option_map([{search_dir, Dir} | Tail], Acc) ->
 	#{ search_dirs := SearchDirsAcc} = Acc,
-	build_option_map(Tail, Acc#{ search_dirs => [ Dir | SearchDirsAcc]}).
+	build_option_map(Tail, Acc#{ search_dirs => [ Dir | SearchDirsAcc]});
+build_option_map([{work_dir, Dir} | Tail], Acc) ->
+	build_option_map(Tail, Acc#{ work_dir => Dir});
+build_option_map([{output_header_file, DoHeader} | Tail], Acc) ->
+	build_option_map(Tail, Acc#{ output_header => DoHeader});
+build_option_map([{output_beam_file, DoBeam} | Tail], Acc) ->
+	build_option_map(Tail, Acc#{ output_beam => DoBeam});
+build_option_map([{executable, DoExe} | Tail], Acc) ->
+	build_option_map(Tail, Acc#{executable => DoExe}).
 
 get_env_search_dirs() ->
 	case os:getenv("MILANG_SEARCH_DIRS") of
@@ -86,9 +90,9 @@ find_file(BaseName, [Dir | Tail]) ->
 			find_file(BaseName, Tail)
 	end.
 
-setup_work_enviroment() ->
-	ok = make_dir_or_die("./milang-work-dir"),
-	HeadersDir = filename:join("milang-work-dir", "headers"),
+setup_work_enviroment(#{ work_dir := WorkDir}) ->
+	ok = make_dir_or_die(WorkDir),
+	HeadersDir = filename:join(WorkDir, "headers"),
 	ok = make_dir_or_die(HeadersDir),
 	Myself = escript:script_name(),
 	{ok, ExtractedEscript} = escript:extract(Myself, []),
@@ -119,21 +123,50 @@ make_dir_or_die(Dir) ->
 			error({dir_not_usable, Error})
 	end.
 
-compile(#{ input_file := InFile, output_file := OutFile, search_dirs := _SearchDirs }) ->
+compile(#{ input_file := InFile } = Options) ->
 	case milang_parse:file(InFile) of
 		{ok, AST} ->
-			milang_compile:compile(AST, [{input_file_name, InFile}, {output_file_name, OutFile}]);
+			ok = maybe_create_header(AST, Options),
+			ok = maybe_create_beam(AST, Options),
+			ok = maybe_create_exe(AST, Options);
 		Error ->
 			io:format("Parsing error:~n~p~n", [Error]),
 			halt(2)
 	end.
 
+maybe_create_header(_AST, #{ ouput_header_file := false}) ->
+	ok;
+maybe_create_header(AST, Options) ->
+	#{ work_dir := WorkDir, input_file := InputFile } = Options,
+	ShortName = (filename:rootname(filename:basename(InputFile))) ++ ".milang-header",
+	HeaderName = filename:join(WorkDir, ShortName),
+	{ok, FD} = file:open(HeaderName, [write]),
+	milang_header:create_header(AST, FD).
+
+maybe_create_beam(_, _) ->
+	ok.
+
+maybe_create_exe(_AST, #{ executable := false}) ->
+	ok;
+maybe_create_exe(AST, Options) ->
+	#{ input_file := InFile, output_file := OutFile, work_dir := WorkDir, search_dirs := SearchDirs } = Options,
+	CompileOpts =
+		[ {input_file_name, InFile}
+		, {output_file_name, OutFile}
+		, {search_dirs, SearchDirs}
+		, {work_dir, WorkDir}
+		],
+	milang_compile:compile(AST, CompileOpts).
 
 
 input_args() ->
 	[{input_file, $i, "input-file", string, "The '.milang' file to parse. It should be the entire filename. It will recursively compile files it depends on."}
-	,{output_file, $o, "output-file", string, "The exectuable file, and directory to write it to."}
+	,{executable, $e, "executable", {boolean, true}, "Attempt to build an exectuable from the input file, and put it in a file named the same as input, with the extension stripped off."}
+	,{executable_file, $f, "executable-file", string, "Same as 'executable', but specify the destination file explicitly"}
+	,{output_header_file, $t, "header-file", {boolean, true}, "Build or not build the header file."}
+	,{output_beam_file, $b, "beam-file", {boolean, true}, "Build or not build the beam file."}
 	,{search_dir, $p, "search-dir", string, "Add the given directory to the list of places to look for source files."}
+	,{work_dir, $w, "work-dir", {string, "./milang-work-dir"}, "Where intermidiate files (such as header and beam) go during the build."}
 	,{verbose, $v, "verbose", undefined, "If specified, be very talkative during the compile process."}
 	,{help, $h, "help", undefined, "Show the help."}
 	,{help, $?, "help", undefined, "Show the help."}
@@ -145,7 +178,7 @@ help_text() ->
 	"\n"
 	"The full path does not need to point to the source file so long as it is in one of the search-dirs.\n"
 	"\n"
-	"If no output file is given, the output file is the input file's name with the ext stripped off. It is an error to have no input file.\n"
+	"If either executable or exectuable_file is set, the input file _must_ define a 'main' function that takes a `List String` and returns as `Task Never Unit`.\n"
 	"\n"
 	"The environment variable MILANG_SEARCH_DIRS is prepended to the search-dir options. The parsing of the variable is simply splitting by colons (:).\n".
 

@@ -9,14 +9,12 @@ system_headers = Concurrency.milang-header Core.milang-header System.Print.milan
 system_headers/%.milang-header : priv/system_headers/%.milang-header
 	cp priv/* system_headers/
 
-$(PROJECT).d:: system_headers/*.milang-header archive_support/milang_curry.beam archive_support/milang_bootstrap.erl
-
 include erlang.mk
 
 ESCRIPT_NAME = milangc
 ESCRIPT_FILE = milangc
 
-escript-zip::
+escript-zip:: system_headers/*.milang-header archive_support/milang_curry.beam archive_support/milang_bootstrap.erl
 	$(verbose) $(ESCRIPT_ZIP) $(ESCRIPT_ZIP_FILE) system_headers/* archive_support/*
 
 priv/archive_support/milang_curry.beam : ebin/milang_curry.beam

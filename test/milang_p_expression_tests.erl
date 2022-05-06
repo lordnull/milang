@@ -2,7 +2,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-expression_test_() ->
+expression_test_d() ->
 	[ ?_assertMatch({ok, {literal_list, _, []}, <<>>}, milang_p_expression:parse(<<"[    ]">>))
 	, ?_assertMatch({ok, {literal_map, _, []}, <<>>}, milang_p_expression:parse(<<"#{}#">>))
 	, ?_assertMatch({ok, {literal_float, _, 5.7}, <<>>}, milang_p_expression:parse(<<"5.7">>))

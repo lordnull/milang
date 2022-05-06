@@ -2,10 +2,11 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-atomics_test_() ->
+atomics_test_d() ->
 	[ ?_assertMatch(<<>>, string:trim(iolist_to_binary(element(2, milang_p_atomic:parse(<<" \n \r\n  \r\n">>)))))
-	, ?_assertMatch({ok, [{docstring, _, <<"yup">>} | _], <<>>}, milang_p_atomic:parse(<<"-doc yup">>))
-	, ?_assertMatch({ok, [{docstring, _, <<"yup yup">>} | _], <<>>}, milang_p_atomic:parse(<<"-doc yup yup\n">>))
+	, ?_assertMatch({ok, <<"yup">>, <<>>}, milang_p_atomic:parse(<<"-doc yup">>))
+	, ?_assertMatch({ok, <<"yup yup">>, <<>>}, milang_p_atomic:parse(<<"-doc yup yup\n">>))
+	, ?_assertMatch({ok, <<"yup\nyup\nyup">>, <<>>}, milang_p_atomic:parse(<<"-doc yup\n-doc yup\n-doc yup">>))
 	, ?_assertMatch({ok, {type_name_local, _, <<"Goober">>}, <<>>}, milang_p_atomic:parse(<<"Goober">>))
 	, ?_assertMatch({ok, {type_name_remote, _, {module_name, _, <<"Eating.Goober">>}, <<"Peas3">>}, <<>>}, milang_p_atomic:parse(<<"Eating.Goober.Peas3">>))
 	, ?_assertMatch({ok, {function_name_local, _, <<"okay_okay">>}, <<>>}, milang_p_atomic:parse(<<"okay_okay">>))

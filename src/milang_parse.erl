@@ -2,9 +2,13 @@
 
 -export([file/1, string/1]).
 
+-type milang_ast() :: [ milang_ast:ast_node() ].
+
+-spec string(unicode:unicode_binary()) -> {ok, milang_ast(), unicode:unicode_binary()} | {error, tuple()}.
 string(Binary) ->
 	parse:it(Binary, milang_p:module()).
 
+-spec file(file:filename()) -> {ok, milang_ast(), unicode:unicode_binary()} | {error, tuple()}.
 file(Filename) ->
 	case file:open(Filename, [read, binary]) of
 		{ok, Handle} ->
@@ -15,10 +19,12 @@ file(Filename) ->
 
 -define(chunk_size, 10000).
 
+-spec parse_file(file:io_device()) -> {ok, milang_ast(), unicode:unicode_binary()} | {error, tuple()}.
 parse_file(Handle) ->
 	ReadResult = io:get_chars(Handle, <<>>, ?chunk_size),
 	parse_file(ReadResult, Handle, _AstAcc = [], _StringLeft = <<>>).
 
+-spec parse_file(unicode:unicode_binary() | io:server_no_data(), file:io_device(), milang_ast(), unicode:unicode_binary()) -> {ok, milang_ast()} | {error, term()}.
 parse_file(eof, _Handle, AstAcc, <<>>) ->
 	{ok, AstAcc};
 parse_file(eof, _Handle, _AstAcc, LeftOverChars) ->

@@ -1,4 +1,15 @@
-{'String', {type, 'String', [], []}}.
-{'Unit', {type, 'Unit', [], []}}.
-{'Never', {type, 'Never', [], ['Never']}}.
-{'List', {type, 'List', [], ['element']}}.
+-module Core exposing [
+	, String
+	, Unit
+	, Never
+	, List
+	].
+
+-type String | String.
+
+-type Unit | Unit.
+
+-type Never | Never.
+
+-type List a | Cons a ( List a) | Nil.
+

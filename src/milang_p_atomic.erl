@@ -80,7 +80,13 @@ upcase_name() ->
 	parse:map(RegEx, fun([V]) -> V end).
 
 space() ->
-	parse:repeat(1, infinity, parse:first_of([whitespace(), comment_line()])).
+	SeriesP = parse:repeat(1, infinity, parse:first_of([whitespace(), comment_line()])),
+	Mapper = fun(Series) ->
+		Joined = lists:join($\n, Series),
+		AsBinary = unicode:characters_to_binary(Joined),
+		string:trim(AsBinary)
+	end,
+	parse:map(SeriesP, Mapper).
 
 space_opt() ->
 	parse:optional(space()).
@@ -93,8 +99,7 @@ comment_line() ->
 	Mapper = fun([_, _, [String]]) ->
 		String
 	end,
-	Mapped = parse:map(Series, Mapper),
-	parse:tag(docstring, Mapped).
+	parse:map(Series, Mapper).
 
 type_name() ->
 	parse:first_of([ type_name_remote(), type_name_local() ]).
@@ -103,12 +108,16 @@ type_name_remote() ->
 	Series = parse:series([module_name_prefix(), upcase_name()]),
 	Tagged = parse:tag(type_name_remote, Series),
 	Mapper = fun({T, L, [M, N]}) ->
-		{T, L, M, N}
+		Data = #{ name => binary_to_atom(N, utf8), module => binary_to_atom(M, utf8)},
+		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
 
 type_name_local() ->
-	parse:tag(type_name_local, upcase_name()).
+	Tagged = parse:tag(type_name_local, upcase_name()),
+	parse:map(Tagged, fun({T, L, N}) ->
+		milang_ast:ast_node(L, <<>>, T, binary_to_atom(N, utf8))
+	end).
 
 module_name_prefix() ->
 	Element = parse:series([upcase_name(), parse:character($.), parse:peek(".")]),
@@ -118,42 +127,34 @@ module_name_prefix() ->
 		Joined = lists:join($., Elements),
 		unicode:characters_to_binary(Joined)
 	end,
-	Mapped = parse:map(Repeat, Mapper),
-	parse:tag(module_name, Mapped).
+	parse:map(Repeat, Mapper).
 
 variable() ->
 	RegEx = parse:regex("[\\p{Ll}_]\\w*", first),
-	Mapped = parse:map(RegEx, fun([V]) -> V end),
-	parse:tag(variable, Mapped).
+	Tagged = parse:tag(variable, RegEx),
+	Mapper = fun({T, L, [V]}) ->
+		milang_ast:ast_node(L, <<>>, T, binary_to_atom(V))
+	end,
+	parse:map(Tagged, Mapper).
 
 infix() ->
 	parse:first_of([ infix_notation(), infix_symbol() ]).
 
 infix_notation() ->
-	parse:first_of([infix_left_assoc(), infix_right_assoc()]).
-
-infix_left_assoc() ->
 	Weight = parse:repeat(1, infinity, parse:character($|)),
-	Arrow = parse:character($>),
+	Arrow = parse:first_of([parse:character($>), parse:character($<)]),
 	Function = parse:first_of([function_name(), infix_symbol()]),
 	Sequence = parse:series([Weight, Arrow, Function]),
-	Tagged = parse:tag(left_assoc, Sequence),
-	Mapper = fun({T, L, [WeightChars, _, FunctionAst]}) ->
-		{T, L, length(WeightChars), FunctionAst}
+	Tagged = parse:tag(infix_notation, Sequence),
+	Mapper = fun({T, L, [WeightChars, ArrowChar, FunctionAst]}) ->
+		Assoc = case ArrowChar of
+			$> -> left;
+			$< -> right
+		end,
+		Data = #{ assoc => Assoc, weight => length(WeightChars), function => FunctionAst},
+		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
-
-infix_right_assoc() ->
-	Arrow = parse:character($<),
-	Weight = parse:repeat(1, infinity, parse:character($|)),
-	Function = parse:first_of([function_name(), infix_symbol()]),
-	Sequence = parse:series([Arrow, Weight, Function]),
-	Tagged = parse:tag(right_assoc, Sequence),
-	Mapper = fun({T, L, [_Arrow, WeightChars, FunctionAst]}) ->
-		{T, L, length(WeightChars), FunctionAst}
-	end,
-	parse:map(Tagged, Mapper).
-
 
 infix_symbol() ->
 	DisallowedSet = ordsets:from_list("'\"[]{}(),"),
@@ -181,27 +182,36 @@ infix_symbol() ->
 		(_Passing) ->
 			ok
 	end),
-	parse:tag(infix_symbol, ValueCheckP).
+	Tagged = parse:tag(infix_symbol, ValueCheckP),
+	Mapped = fun({T, L, B}) ->
+		milang_ast:ast_node(L, <<>>, T, binary_to_atom(B, utf8))
+	end,
+	parse:map(Tagged, Mapped).
 
 function_name() ->
 	parse:first_of([ function_name_local(), function_name_remote(), function_name_symbol()]).
 
 function_name_local() ->
-	parse:tag(function_name_local, downcase_name()).
+	Tagged = parse:tag(function_name_local, downcase_name()),
+	Mapper = fun({T, L, N}) ->
+		milang_ast:ast_node(L, <<>>, T, binary_to_atom(N, utf8))
+	end,
+	parse:map(Tagged, Mapper).
 
 function_name_remote() ->
 	Series = parse:series([module_name_prefix(), downcase_name()]),
 	Tag = parse:tag(function_name_remote, Series),
 	Mapper = fun({T, L, [M, F]}) ->
-		{T, L, M, F}
+		Data = #{ name => binary_to_atom(F, utf8), module => binary_to_atom(M) },
+		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tag, Mapper).
 
 function_name_symbol() ->
 	Series = parse:series([parse:character($'), infix_symbol(), parse:character($')]),
-	Mapper = fun([_, SymbolAST, _]) ->
-		{infix_symbol, _, Symbol} = SymbolAST,
-		Symbol
+	Tagged = parse:tag(function_name_symbol, Series),
+	Mapper = fun({T, L, [_, SymbolAST, _]}) ->
+		#{ data := Symbol } = milang_ast:to_map(SymbolAST),
+		milang_ast:ast_node(L, <<>>, T, Symbol)
 	end,
-	Map = parse:map(Series, Mapper),
-	parse:tag(function_name_symbol, Map).
+	parse:map(Tagged, Mapper).

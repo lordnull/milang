@@ -12,21 +12,21 @@
 	, declaration_function/0
 	]).
 
+-spec space_opt() -> parse:parser(none(), unicode:chardata()).
 space_opt() ->
 	parse:optional(milang_p_atomic:space()).
 
 space() ->
 	milang_p_atomic:space().
 
+-spec dot() -> parse:parser({expected, $.}, $.).
 dot() ->
 	parse:character($.).
 
 upcase_name() ->
 	milang_p_atomic:upcase_name().
 
-%downcase_name() ->
-%	milang_p_atomic:downcase_name().
-
+-spec module() -> parse:parser(term(), [ milang_ast:ast_node() ]).
 module() ->
 	DeclarationRepeat = parse:repeat_until_error(parse:series([declaration(), space_opt()])),
 	Series = parse:series([ space_opt(), DeclarationRepeat]),
@@ -70,8 +70,9 @@ declaration_module() ->
 		]),
 	Tagged = parse:tag(declaration_module, SeriesP),
 	Mapper = fun({T, L, Nodes}) ->
-		[_, _, Name, _, _ExposingKeyword, _, Exposing, _, _] = Nodes,
-		{T, L, Name, Exposing}
+		[_, Doc, Name, _, _ExposingKeyword, _, Exposing, _, _] = Nodes,
+		Data = #{ name => binary_to_atom(Name, utf8), exposing => Exposing},
+		milang_ast:ast_node(L, Doc, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
 
@@ -98,12 +99,13 @@ declaration_import() ->
 		, dot()
 		]),
 	Tagged = parse:tag(declaration_import, SeriesP),
-	Mapper = fun({T, L, [_, _, Module, Alias, MaybeExposing, _, _]}) ->
+	Mapper = fun({T, L, [_, Doc, Module, Alias, MaybeExposing, _, _]}) ->
 		Exposing = case MaybeExposing of
 			[] -> [];
 			[E] -> E
 		end,
-		{T, L, Module, Alias, Exposing}
+		Data = #{ name => binary_to_atom(Module, utf8), alias => Alias, exposing => Exposing},
+		milang_ast:ast_node(L, Doc, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
 
@@ -111,7 +113,7 @@ module_alias_section() ->
 	SeriesP = parse:series([space(), parse:string(<<"as">>), space(), upcase_name()]),
 	OptionalP = parse:optional(SeriesP),
 	Mapper = fun([[_, _, _, Name]]) ->
-		Name;
+		binary_to_atom(Name, utf8);
 		([]) ->
 			undefined
 	end,
@@ -128,8 +130,10 @@ declaration_alias() ->
 	SeriesP = parse:series([parse:string(<<"-alias">>), constraints_section(), space(), milang_p_atomic:upcase_name(), args_list(), space_opt(), parse:character($=), space_opt(), milang_p_type:concrete(), space_opt(), dot()]),
 	Tagged = parse:tag(declaration_alias, SeriesP),
 	Mapped = fun({T, L, Series}) ->
-		[_, Constraints, _, Name, Args, _, _Equals, _, Original, _, _Dot] = Series,
-		{T, L, Name, Args, Constraints, Original}
+		[Doc1, Constraints, Doc2, Name, Args, _, _Equals, _, Original, _, _Dot] = Series,
+		Docs = unicode:characters_to_binary([Doc1, "\n", Doc2]),
+		Data = #{ name => Name, constraints => Constraints, args => Args, original => Original },
+		milang_ast:ast_node(L, Docs, T, Data)
 	end,
 	parse:map(Tagged, Mapped).
 
@@ -137,8 +141,10 @@ declaration_type() ->
 	SeriesP = parse:series([parse:string(<<"-type">>), constraints_section(), space(), upcase_name(), args_list(), constructors(), space_opt(), dot()]),
 	Tagged = parse:tag(declaration_type, SeriesP),
 	Mapper = fun({T, L, Series}) ->
-		[_, Constraints, _, Name, Args, Constructors, _, _Dot] = Series,
-		{T, L, Name, Args, Constraints, Constructors}
+		[Doc1, Constraints, Doc2, Name, Args, Constructors, _, _Dot] = Series,
+		Docs = unicode:characters_to_binary([Doc1, "\n", Doc2]),
+		Data = #{ name => Name, args => Args, constraints => Constraints, constructors => Constructors },
+		milang_ast:ast_node(L, Docs, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
 
@@ -147,27 +153,28 @@ constructors() ->
 
 constructor_element() ->
 	SeriesP = parse:series([space_opt(), parse:character($|), space_opt(), milang_p_type:data()]),
-	Tagged = parse:tag(type_constructor, SeriesP),
-	Mapper = fun({T, L, Series}) ->
-		[_, _Pipe, _, Data] = Series,
-		{T, L, Data}
+	Mapper = fun(Series) ->
+		[Doc1, _Pipe, Doc2, Data] = Series,
+		Docs = unicode:characters_to_binary([Doc1, "\n", Doc2]),
+		milang_ast:set_doc(Docs, Data)
 	end,
-	parse:map(Tagged, Mapper).
+	parse:map(SeriesP, Mapper).
 
 declaration_class() ->
 	ClassMembersP = class_members(),
 	SeriesP = parse:series([parse:string(<<"-class">>), constraints_section(), space(), upcase_name(), args_list(), ClassMembersP, space_opt(), dot()]),
 	Tagged = parse:tag(declaration_class, SeriesP),
 	Mapper = fun({T, L, [_DeclareType, Constraints, _, Name, Args, Members, _, _Dot]}) ->
-		{T, L, Name, Constraints, Args, Members}
+		Data = #{ name => Name, args => Args, constraints => Constraints, members => Members },
+		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
 
 class_members() ->
 	ElementsP = parse:lazy(fun() ->
 		SeriesP = parse:series([space_opt(), parse:character($|), space_opt(), class_member()]),
-		Mapper = fun([_, _, _, Member]) ->
-			Member
+		Mapper = fun([Doc1, _, Doc2, Member]) ->
+			milang_ast:set_doc([Doc1, "\n", Doc2], Member)
 		end,
 		parse:map(SeriesP, Mapper)
 	end),
@@ -179,9 +186,10 @@ class_member() ->
 class_member_definition() ->
 	NameP = parse:first_of([milang_p_atomic:function_name_local(), milang_p_atomic:function_name_symbol()]),
 	SeriesP = parse:series([NameP, space_opt(), parse:character($:), space_opt(), milang_p_type:function()]),
-	Tagged = parse:tag(class_member, SeriesP),
+	Tagged = parse:tag(class_member_definition, SeriesP),
 	Mapper = fun({T, L, [Name, _, _Colon, _, Def]}) ->
-		{T, L, Name, Def}
+		Data = #{ name => Name, definition => Def},
+		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
 
@@ -190,9 +198,10 @@ class_member_default() ->
 	ArgsP = args_list(),
 	ExpressionP = parse:lazy(fun milang_p_expression:expression/0),
 	SeriesP = parse:series([NameP, ArgsP, space_opt(), parse:character($=), space_opt(), ExpressionP, space_opt(), dot()]),
-	Tagged = parse:tag(class_default, SeriesP),
+	Tagged = parse:tag(class_member_default, SeriesP),
 	Mapper = fun({T, L, [Name, Args, _, _Equals, _, Expression, _, _Dot]}) ->
-		{T, L, Name, Args, Expression}
+		Data = #{ name => Name, args => Args, expression => Expression },
+		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
 
@@ -202,15 +211,16 @@ declaration_function() ->
 	SeriesP = parse:series([NameP, args_list(), space_opt(), parse:string(<<"->">>), space_opt(), function_bindings(), space_opt(), milang_p_expression:expression(), space_opt(), dot()]),
 	Tagged = parse:tag(declaration_function, SeriesP),
 	Mapper = fun({T, L, [Name, Args, _, _Equals, _, Bindings, _, Expression, _, _Dot]}) ->
-		{T, L, Name, Args, Bindings, Expression}
+		Data = #{ name => Name, args => Args, bindings => Bindings, expression => Expression },
+		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
 
 function_bindings() ->
 	SeriesP = parse:series([space_opt(), milang_p_atomic:variable(), space_opt(), parse:character($=), space_opt(), parse:lazy(fun milang_p_expression:expression/0), space_opt(), parse:character($,)]),
-	BindingTagged = parse:tag(bind, SeriesP),
+	BindingTagged = parse:tag(binding, SeriesP),
 	BindingMapper = fun({T, L, [_, Variable, _, _Equals, _, Expression, _, _Comma]}) ->
-		{T, L, Variable, Expression}
+		milang_ast:ast_node(L, <<>>, T, #{ name => Variable, expression => Expression})
 	end,
 	BindingP = parse:map(BindingTagged, BindingMapper),
 	parse:repeat_until_error(BindingP).
@@ -221,7 +231,8 @@ declaration_spec() ->
 	SeriesP = parse:series([NameP, space_opt(), parse:character($:), space_opt(), milang_p_type:function(), space_opt(), dot()]),
 	Tagged = parse:tag(declaration_spec, SeriesP),
 	Mapper = fun({T, L, [Name, _, _Colon, _, Def, _, _Dot]}) ->
-		{T, L, Name, Def}
+		Data = #{ name => Name, spec => Def },
+		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
 
@@ -231,11 +242,10 @@ constraints_section() ->
 	ItemsP = milang_p_atomic:record(KeyP, ValueP),
 	SeriesP = parse:series([space(), parse:string(<<"when">>), space_opt(), ItemsP]),
 	WhenExistsMapper = fun([_, _, _, Items]) ->
-		Items
+		[{K, V} || {record_field, _, K, V} <- Items]
 	end,
 	WhenExistsMapped = parse:map(SeriesP, WhenExistsMapper),
-	OptionalP = parse:optional(WhenExistsMapped),
-	parse:tag(constraints, OptionalP).
+	parse:optional(WhenExistsMapped).
 
 args_list() ->
 	ItemP = parse:series([space(), milang_p_atomic:variable()]),

@@ -4,7 +4,7 @@
 
 -type parse_ok(Ok) :: {ok, non_neg_integer(), Ok}.
 
--type parse_err(Err) :: {err, #{ location := location()} , Err }.
+-type parse_err(Err) :: {error, #{ location := location()} , Err }.
 
 -type parse_terminal(Err, Ok) :: parse_err(Err) | parse_ok(Ok).
 
@@ -24,7 +24,7 @@
 
 -type parser(Err, Ok, Acc) :: fun((location(), binary()) -> parse_result(Err, Ok, Acc)).
 
--type parse_stack_frame(Err, Ok, Acc) :: {unicode:unicode_binary(), location(), parse_accumulator(Err, Ok, Acc), Acc}.
+-type parse_stack_frame(Err, Ok, Acc) :: {unicode:unicode_binary(), location(), parse_accumulator(Err, Ok, Acc), Acc, parser_context()}.
 
 -type parse_stack(Err, Ok, Acc) :: [ parse_stack_frame(Err, Ok, Acc) ].
 
@@ -63,7 +63,7 @@
 	, lazy/1
 	]).
 
--spec it(unicode:unicode_binary(), parser(Err, Ok)) -> parse_err(Err) | parse_ok(Ok).
+-spec it(unicode:unicode_binary(), parser(Err, Ok)) -> parse_err(Err) | {ok, Ok, unicode:unicode_binary()}.
 it(Binary, Parser) ->
 	Location = {1, 1},
 	Stack = [],
@@ -84,9 +84,10 @@ it(Binary, Parser) ->
 			{error, {parser_crash, What, Why}}
 	end.
 
+-spec default_acc(E, _) -> E.
 default_acc(E, _) -> E.
 
--spec parse(unicode:unicode_binary(), location(), parse_result(Err, Ok, Acc), parse_accumulator(Err, Ok, Acc), Acc, parser_context(), parse_stack(Err, Ok, Acc)) -> parse_err(Err) | parse_ok(Ok).
+-spec parse(unicode:unicode_binary(), location(), parse_result(Err, Ok, Acc), parse_accumulator(Err, Ok, Acc), Acc, parser_context(), parse_stack(Err, Ok, Acc)) -> parse_err(Err) | {ok, Ok, unicode:unicode_binary()}.
 
 parse(Binary, Location, {push, Consume, NewParser, NewAccFun, NewAccState}, AccFun, AccState, Context, Stack) ->
 	PushItem = {Binary, Location, AccFun, AccState, Context},
@@ -110,6 +111,7 @@ parse(Binary, Location, RawResult, AccFun, AccState, Context, Stack) ->
 			parse(NewBinary, NewLocation, NewResult, NewAccFun, NewAccState, NewContext, NewStack)
 	end.
 
+-spec create_parser_context(parser(_, _)) -> parser_context().
 create_parser_context(Parser) ->
 	InfoProplist = erlang:fun_info(Parser),
 	Module = proplists:get_value(module, InfoProplist),
