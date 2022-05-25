@@ -1,3 +1,0 @@
--module System.Print exposing [, ln ].
-
-ln : String -> Concurrency.Task Never Unit.

@@ -69,6 +69,13 @@ valid_parse_test_() ->
 		.">>
 	, <<"withABinding q -> varp = Goober, frob q varp.">>
 	, <<"withAndInfifx e ->\n    Frob a |>pipe quux\n    .">>
+	% formats that are used for headers. Essentially for headers we allow fully
+	% qualified names for basically anything.
+	, <<"-type SomeModule.T | SomeModule.First | SomeModule.Second SupportModule.Cool.">>
+	, <<"-alias SomeModule.A = List Integer.">>
+	, <<"-class SomeModule.SomeClass a | do_a_thing : a -> Bool .">>
+	, <<"SomeModule.specThisFunc : SomeModule.T.">>
+	, <<"SomeModule.specThisFunc : SomeModule.T -> a -> Support.Cool.">>
 	],
 	lists:map(fun(Str) ->
 		{Str, fun() -> {ok, _, <<>>} = parse:it(Str, milang_p:module()) end}

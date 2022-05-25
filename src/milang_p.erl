@@ -36,8 +36,9 @@ module() ->
 	parse:map(Series, Mapper).
 
 declaration() ->
-	PeekRegex = "(-module|-import|-alias|-type|-class|[a-z][\\w]*[\\s]*(:)|\'[\\pS\\pP]+\'[\s]*(:)|[\\w]+)",
+	PeekRegex = "(-module|-import|-alias|-type|-class)",
 	PeekP = parse:peek(PeekRegex),
+
 	AndThenner = fun
 		([<<"-module">> | _]) ->
 			declaration_module();
@@ -54,7 +55,15 @@ declaration() ->
 		(_) ->
 			declaration_function()
 	end,
-	parse:andThen(PeekP, AndThenner).
+	NonFunctionDecs = parse:andThen(PeekP, AndThenner),
+
+	FunctionSpecTest = parse:test(parse:series([milang_p_atomic:function_name(), space_opt(), parse:character($:)])),
+	FunctionDefTest = parse:test(milang_p_atomic:function_name()),
+
+	FunctionSpec = parse:andThen(FunctionSpecTest, fun(_) -> declaration_spec() end),
+	FunctionDef = parse:andThen(FunctionDefTest, fun(_) -> declaration_function() end),
+
+	parse:first_of([NonFunctionDecs, FunctionSpec, FunctionDef]).
 
 declaration_module() ->
 	SeriesP = parse:series(
@@ -127,7 +136,7 @@ exposing_section() ->
 	parse:map(SeriesP, Mapper).
 
 declaration_alias() ->
-	SeriesP = parse:series([parse:string(<<"-alias">>), constraints_section(), space(), milang_p_atomic:upcase_name(), args_list(), space_opt(), parse:character($=), space_opt(), milang_p_type:concrete(), space_opt(), dot()]),
+	SeriesP = parse:series([parse:string(<<"-alias">>), constraints_section(), space(), milang_p_atomic:type_name(), args_list(), space_opt(), parse:character($=), space_opt(), milang_p_type:concrete(), space_opt(), dot()]),
 	Tagged = parse:tag(declaration_alias, SeriesP),
 	Mapped = fun({T, L, Series}) ->
 		[Doc1, Constraints, Doc2, Name, Args, _, _Equals, _, Original, _, _Dot] = Series,
@@ -138,11 +147,11 @@ declaration_alias() ->
 	parse:map(Tagged, Mapped).
 
 declaration_type() ->
-	SeriesP = parse:series([parse:string(<<"-type">>), constraints_section(), space(), upcase_name(), args_list(), constructors(), space_opt(), dot()]),
+	SeriesP = parse:series([parse:string(<<"-type">>), constraints_section(), space(), milang_p_atomic:type_name(), args_list(), constructors(), space_opt(), dot()]),
 	Tagged = parse:tag(declaration_type, SeriesP),
 	Mapper = fun({T, L, Series}) ->
-		[Doc1, Constraints, Doc2, Name, Args, Constructors, _, _Dot] = Series,
-		Docs = unicode:characters_to_binary([Doc1, "\n", Doc2]),
+		[_TypeTag, Constraints, Doc1, Name, Args, Constructors, _, _Dot] = Series,
+		Docs = unicode:characters_to_binary(Doc1),
 		Data = #{ name => Name, args => Args, constraints => Constraints, constructors => Constructors },
 		milang_ast:ast_node(L, Docs, T, Data)
 	end,
@@ -162,7 +171,7 @@ constructor_element() ->
 
 declaration_class() ->
 	ClassMembersP = class_members(),
-	SeriesP = parse:series([parse:string(<<"-class">>), constraints_section(), space(), upcase_name(), args_list(), ClassMembersP, space_opt(), dot()]),
+	SeriesP = parse:series([parse:string(<<"-class">>), constraints_section(), space(), milang_p_atomic:type_name(), args_list(), ClassMembersP, space_opt(), dot()]),
 	Tagged = parse:tag(declaration_class, SeriesP),
 	Mapper = fun({T, L, [_DeclareType, Constraints, _, Name, Args, Members, _, _Dot]}) ->
 		Data = #{ name => Name, args => Args, constraints => Constraints, members => Members },
@@ -184,7 +193,7 @@ class_member() ->
 	parse:first_of([ class_member_definition(), class_member_default()]).
 
 class_member_definition() ->
-	NameP = parse:first_of([milang_p_atomic:function_name_local(), milang_p_atomic:function_name_symbol()]),
+	NameP = milang_p_atomic:function_name(),
 	SeriesP = parse:series([NameP, space_opt(), parse:character($:), space_opt(), milang_p_type:function()]),
 	Tagged = parse:tag(class_member_definition, SeriesP),
 	Mapper = fun({T, L, [Name, _, _Colon, _, Def]}) ->
@@ -194,7 +203,7 @@ class_member_definition() ->
 	parse:map(Tagged, Mapper).
 
 class_member_default() ->
-	NameP = parse:first_of([milang_p_atomic:function_name_local(), milang_p_atomic:function_name_symbol()]),
+	NameP = milang_p_atomic:function_name(),
 	ArgsP = args_list(),
 	ExpressionP = parse:lazy(fun milang_p_expression:expression/0),
 	SeriesP = parse:series([NameP, ArgsP, space_opt(), parse:character($=), space_opt(), ExpressionP, space_opt(), dot()]),
@@ -207,7 +216,7 @@ class_member_default() ->
 
 
 declaration_function() ->
-	NameP = parse:first_of([milang_p_atomic:function_name_local(), milang_p_atomic:function_name_symbol()]),
+	NameP = milang_p_atomic:function_name_local(),
 	SeriesP = parse:series([NameP, args_list(), space_opt(), parse:string(<<"->">>), space_opt(), function_bindings(), space_opt(), milang_p_expression:expression(), space_opt(), dot()]),
 	Tagged = parse:tag(declaration_function, SeriesP),
 	Mapper = fun({T, L, [Name, Args, _, _Equals, _, Bindings, _, Expression, _, _Dot]}) ->
@@ -227,7 +236,7 @@ function_bindings() ->
 
 
 declaration_spec() ->
-	NameP = parse:first_of([milang_p_atomic:function_name_local(), milang_p_atomic:function_name_symbol()]),
+	NameP = milang_p_atomic:function_name(),
 	SeriesP = parse:series([NameP, space_opt(), parse:character($:), space_opt(), milang_p_type:function(), space_opt(), dot()]),
 	Tagged = parse:tag(declaration_spec, SeriesP),
 	Mapper = fun({T, L, [Name, _, _Colon, _, Def, _, _Dot]}) ->

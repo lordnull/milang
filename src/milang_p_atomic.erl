@@ -60,7 +60,7 @@ record(KeyParser, ValueParser) ->
 		ETagged = parse:tag(record_field, ESeriesP),
 		EMapper = fun({T, L, Node}) ->
 			[_, _Comma, _, Key, _, _Equals, _, Value] = Node,
-			{T, L, Key, Value}
+			milang_ast:ast_node(L, <<>>, T, #{ key => Key, value => Value })
 		end,
 		parse:map(ETagged, EMapper)
 	end),
@@ -199,10 +199,19 @@ function_name_local() ->
 	parse:map(Tagged, Mapper).
 
 function_name_remote() ->
-	Series = parse:series([module_name_prefix(), downcase_name()]),
+	LocalNameRaw = parse:first_of([downcase_name(), function_name_symbol()]),
+	LocalNamePart = parse:map(LocalNameRaw, fun(Node) ->
+		if
+			is_binary(Node) ->
+				binary_to_atom(Node, utf8);
+			is_tuple(Node) ->
+				milang_ast:data(Node)
+		end
+	end),
+	Series = parse:series([module_name_prefix(), LocalNamePart]),
 	Tag = parse:tag(function_name_remote, Series),
 	Mapper = fun({T, L, [M, F]}) ->
-		Data = #{ name => binary_to_atom(F, utf8), module => binary_to_atom(M) },
+		Data = #{ name => F, module => binary_to_atom(M) },
 		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tag, Mapper).

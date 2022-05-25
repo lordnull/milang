@@ -1,1 +1,2 @@
-{'System.Print.ln', {function, 'System.Print.ln', 'System.Print', 'ln', [{concrete, 'String', []}, {concrete, 'Concurrency.Task', [{concrete, 'Never', []}, {concrete, 'Unit', []}]}]}}.
+
+System.Print.ln : Core.String -> Core.Unit.

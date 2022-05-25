@@ -7,7 +7,7 @@ DEPS = getopt
 system_headers = Concurrency.milang-header Core.milang-header System.Print.milang-header
 
 system_headers/%.milang-header : priv/system_headers/%.milang-header
-	cp priv/* system_headers/
+	cp priv/system_headers/* system_headers/
 
 include erlang.mk
 

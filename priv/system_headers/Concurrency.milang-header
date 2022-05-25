@@ -1,3 +1,6 @@
-{'Concurrency.do', {function, 'Concurrency.do', 'Concurrency', 'do', [{type, 'Concurrency.Actor'}, 'error', 'ok', 'state']}}.
-{'Concurrency.Actor', {data, 'Concurrency.Actor', ['error', 'ok', 'state']}}.
-{'Concurrency.Task', {data, 'Concurrency.Task', ['error', 'ok']}}.
+
+-type Concurrency.Actor error ok state | Concurrency.Actor error ok state.
+
+-type Concurrency.Task error ok | Concurrency.Task error ok.
+
+Concurrency.do : Concurrency.Task error ok.

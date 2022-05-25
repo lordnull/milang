@@ -39,6 +39,7 @@
 	[ regex/1
 	, regex/2
 	, peek/1
+	, test/1
 	, success/1
 	, fail/1
 	, character/1
@@ -235,6 +236,19 @@ peek_finalize({error, _} = Error, undefined) ->
 	Error;
 peek_finalize({ok, _, Args}, undefined) ->
 	{ok, 0, Args}.
+
+%% @doc Run the parser, but do not consume any characters.
+-spec test(parser(Err, Ok)) -> parser(Err, Ok).
+test(Parser) ->
+	fun(_Location, _Subject) ->
+		{push, 0, Parser, fun test_finalize/2, undefined}
+	end.
+
+test_finalize({error, _} = Error, undefined) ->
+	Error;
+test_finalize({ok, _, Args}, undefined) ->
+	{ok, 0, Args}.
+
 
 -spec success(Ok) -> parser(none(), Ok).
 success(Out) ->

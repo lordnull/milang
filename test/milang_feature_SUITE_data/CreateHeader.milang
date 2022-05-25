@@ -1,0 +1,23 @@
+-module CreateHeader exposing [
+	, Temp
+	, Flavor
+	, Meal
+	, cook
+	, season
+	].
+
+-import Steak exposing [,Cut].
+
+-type Temp | Blue | Rare | MediumRare | Medium | MediumWell | Well | Char.
+
+-type Flavor | Clean | Spice | Sweet | Buttery | Other Core.String.
+
+-alias Meal = { , temp = Temp , flavor = Flavor, cut = Cut }.
+
+cook : Cut -> Temp -> Meal.
+cook cut temp ->
+	{ , cut = Cut, temp = Temp, flavor = Clean }.
+
+season : Flavor -> Meal -> Meal.
+season flavor meal ->
+	{ , cut = cut meal, temp = temp meal, flavor = flavor }.

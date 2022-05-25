@@ -16,92 +16,176 @@
 %% for milang.
 -module(milang_header).
 
--export([read_header_file/1, read_header_string/1]).
+-include("milang_ast.hrl").
+
 -export([create_header/2]).
 
-read_header_file(Filename) ->
-	case file:read_file(Filename) of
-		{ok, FileContents} ->
-			read_header_string(FileContents);
-		Error ->
-			Error
-	end.
 
-read_header_string(Src) ->
-	case parse:it(Src, milang_p:module()) of
-		{ok, Parsed, <<>>} ->
-			{ok, build_table(Parsed, undefined, _LocalizedEntries = #{})};
-		{ok, _Parsed, Trailing} ->
-			{error, {trailing_characters, Trailing}};
-		Error ->
-			Error
-	end.
-
-build_table([], ModuleName, Entries) ->
-	finalize_table(ModuleName, Entries);
-build_table([#{ type := declaration_module} = Node | Tail], _, Entries) ->
-	#{ name := ModuleName, exposing := Exposing } = maps:get(data, Node),
-	NewEntries = lists:foldl(fun(E, Acc) ->
-		EntryName = build_name(ModuleName, milang_ast:data(E)),
-		maps:put(EntryName, undefined, Acc)
-	end, Entries, Exposing),
-	build_table(Tail, ModuleName, NewEntries);
-build_table([#{type := declaration_type} = Node | Tail], ModuleName, Entries) ->
-	#{ name := Name, constraints := Constraints, args := Args, constructors := Constructors} = maps:get(data, Node),
-	TopName = build_name(ModuleName, Name),
-	TypeEntry = milang_type_validation:type(TopName, Constraints, Args),
-	WithTopType = maps:put(TopName, TypeEntry, Entries),
-	NewEntries = lists:foldl(fun(E, Acc) ->
-		add_constructors(TopName, ModuleName, E, Acc)
-	end, WithTopType, Constructors),
-	build_table(Tail, ModuleName, NewEntries);
-build_table([#{ type := declaration_spec } = Node | Tail], ModuleName, Entries) ->
-	#{ name := Name, spec := Spec } = maps:get(data, Node),
-	TopName = build_name(ModuleName, Name),
-	TypeEntry = milang_type_validation:function(TopName, Spec),
-	NewEntries = maps:put(TopName, TypeEntry, Entries),
-	build_table(Tail, ModuleName, NewEntries);
-build_table([ Node | Tail], ModuleName, Entries) when is_tuple(Node) ->
-	AsMap = milang_ast:to_map(Node),
-	build_table([AsMap | Tail], ModuleName, Entries);
-build_table([ Node | _Tail], _ModuleName, _Entries) ->
-	error({nyi, Node}).
-
-add_constructors(ParentType, ModuleName, ConstrutorAST, Entries) ->
-	Data = milang_ast:data(ConstrutorAST),
-	#{ name := NameAST, args := Args} = Data,
-	Name = milang_ast:data(NameAST),
-	FullName = build_name(ModuleName, Name),
-	% TODO convert the args to actually type checkable things.
-	Entry = milang_type_validation:constructor(FullName, ParentType, Args),
-	maps:put(FullName, Entry, Entries).
-
-build_name(ModuleName, AST) when is_tuple(AST) ->
-	build_name(ModuleName, milang_ast:to_string(AST));
-build_name(ModuleName, LocalName) ->
-	binary_to_atom(unicode:characters_to_binary(io_lib:format("~s.~s", [ModuleName, LocalName]))).
-
-finalize_table(_ModuleName, Entries) ->
-	Entries.
-
+%% @doc The ast must already have passed type checking and linter, otherwise
+%% this will likley make a bad header. Also we make no check that the module name
+%% in the as will match whatever we're writing to (file or otherwise).
+%%
+%% A header file is "valid" milang syntax. Valid in that it's got type and
+%% function names where we expect them, but any aliases or local names become
+%% fully qualified. This allows other systems to simply read the header and
+%% to load into the type table without translations.
 create_header(AST, IoDev) ->
-	OnlyHeaderWorthy = lists:filter(fun header_worthy/1, AST),
+	TranslationTable = build_translation_table(AST),
+	OutAST = create_header_ast(AST, TranslationTable),
 	lists:foreach(fun(HeaderWorthy) ->
 		ok = io:put_chars(IoDev, milang_ast:to_string(HeaderWorthy))
-	end, OnlyHeaderWorthy).
+	end, OutAST).
 
-header_worthy(Node) ->
-	case milang_ast:type(Node) of
-		declaration_module ->
-			true;
-		declaration_type ->
-			true;
-		declaration_alias ->
-			true;
-		declaration_spec ->
-			true;
-		declaration_class ->
-			true;
+build_translation_table(AST) ->
+	lists:foldl(fun build_translation_table/2, #{}, AST).
+
+build_translation_table(#milang_ast{ type = declaration_module} = Node, Table) ->
+	#{ name := Name, exposing := Exposing } = Node#milang_ast.data,
+	lists:foldl(fun(ExposingNode, Acc) ->
+		add_remote_translation(Name, ExposingNode, Acc)
+	end, Table, Exposing);
+build_translation_table(#milang_ast{ type = declaration_import} = Node, Table) ->
+	#{ name := ModuleName, alias := Alias, exposing := Exposing} = Node#milang_ast.data,
+	TableWithAlias = case Alias of
+		undefined ->
+			Table;
 		_ ->
-			false
+			Table#{ {module, Alias} => ModuleName }
+	end,
+	lists:foldl(fun(ExposingNode, Acc) ->
+		add_remote_translation(ModuleName, ExposingNode, Acc)
+	end, TableWithAlias, Exposing);
+build_translation_table(#milang_ast{ type = declaration_type} = Node, Table) ->
+	#{ name := NameAST} = Node#milang_ast.data,
+	LocalName = NameAST#milang_ast.data,
+	case maps:find(LocalName, Table) of
+		error ->
+			% it's an internal type (not exposed), so we can ignore it.
+			Table;
+		{ok, RemoteName} ->
+			#{ module := Module} = RemoteName,
+			#{ args := Args, constraints := Constraints, constructors := Constructors } = Node#milang_ast.data,
+			lists:foldl(fun(TypeNode, Acc) ->
+				add_remote_translation(Module, TypeNode, Acc)
+			end, Table, Args ++ Constraints ++ Constructors)
+	end;
+build_translation_table(_, Table) ->
+	Table.
+
+add_remote_translation(ModuleName, #milang_ast{ type = type_name_local } = Node, Table) ->
+	LocalName = Node#milang_ast.data,
+	NewName = #{ name => LocalName, module => ModuleName },
+	Table#{ LocalName => NewName };
+add_remote_translation(ModuleName, #milang_ast{ type = function_name_local } = Node, Table) ->
+	LocalName = Node#milang_ast.data,
+	NewName = #{ name => LocalName, module => ModuleName },
+	Table#{ LocalName => NewName };
+add_remote_translation(ModuleName, #milang_ast{ type = function_name_symbol} = Node, Table) ->
+	LocalName = Node#milang_ast.data,
+	NewName = #{ name => LocalName, module => ModuleName },
+	Table#{ LocalName => NewName };
+add_remote_translation(ModuleName, #milang_ast{ type = type_data } = Node, Table) ->
+	#{ name := NameAST, args := Args } = Node#milang_ast.data,
+	MidTable = add_remote_translation(ModuleName, NameAST, Table),
+	lists:foldl(fun(ArgNode, Acc) ->
+		add_remote_translation(ModuleName, ArgNode, Acc)
+	end, MidTable, Args);
+add_remote_translation(_Module, _Node, Table) ->
+	Table.
+	%% TODO add remote translations for type constructors.
+
+create_header_ast(AST, TranslationTable) ->
+	lists:filtermap(fun(Node) ->
+		maybe_convert_node(Node, TranslationTable)
+	end, AST).
+
+maybe_convert_node(#milang_ast{ type = declaration_function}, _Translations) ->
+	false;
+maybe_convert_node(#milang_ast{ type = declaration_spec} = Node, Translations) ->
+	#{ name := SpecName } = Node#milang_ast.data,
+	case maps:find(SpecName#milang_ast.data, Translations) of
+		error ->
+			false;
+		{ok, _TrueName} ->
+			{true, convert_node(Node, Translations)}
+	end;
+maybe_convert_node(#milang_ast{ type = declaration_module}, _Translations) ->
+	false;
+maybe_convert_node(#milang_ast{ type = declaration_import}, _Translations) ->
+	false;
+maybe_convert_node(#milang_ast{ type = declaration_type} = Node, Translations) ->
+	#{ name := TypeName } = Node#milang_ast.data,
+	case maps:find(TypeName#milang_ast.data, Translations) of
+		error ->
+			false;
+		{ok, _} ->
+			{true, convert_node(Node, Translations)}
+	end;
+maybe_convert_node(#milang_ast{ type = declaration_alias } = Node, Translations) ->
+	#{ name := TypeName } = Node#milang_ast.data,
+	case maps:find(TypeName#milang_ast.data, Translations) of
+		error ->
+			false;
+		{ok, _} ->
+			{true, convert_node(Node, Translations)}
 	end.
+
+convert_node(#milang_ast{ type = function_name_local} = Node, Translations) ->
+	case maps:find(Node#milang_ast.data, Translations) of
+		error ->
+			Node;
+		{ok, RemoteName} ->
+			Node#milang_ast{ type = function_name_remote, data = RemoteName }
+	end;
+convert_node(#milang_ast{ type = function_name_symbol } = Node, Translations) ->
+	case maps:find(Node#milang_ast.data, Translations) of
+		error ->
+			Node;
+		{ok, RemoteName} ->
+			Node#milang_ast{ type = function_name_remote, data = RemoteName }
+	end;
+convert_node(#milang_ast{ type = type_name_local } = Node, Translations) ->
+	case maps:find(Node#milang_ast.data, Translations) of
+		error ->
+			Node;
+		{ok, RemoteName} ->
+			Node#milang_ast{ type = type_name_remote, data = RemoteName}
+	end;
+convert_node(#milang_ast{ type = function_name_remote} = Node, Translations) ->
+	#{ module := Mod} = Data = Node#milang_ast.data,
+	case maps:find({module, Mod}, Translations) of
+		error ->
+			Node;
+		{ok, TrueModule} ->
+			NewData = Data#{ module => TrueModule },
+			Node#milang_ast{ data = NewData}
+	end;
+convert_node(#milang_ast{ type = type_name_remote} = Node, Translations) ->
+	#{ module := Mod} = Data = Node#milang_ast.data,
+	case maps:find({module, Mod}, Translations) of
+		error ->
+			Node;
+		{ok, TrueModule} ->
+			NewData = Data#{module => TrueModule},
+			Node#milang_ast{ data = NewData }
+	end;
+convert_node(#milang_ast{} = Node, Translations) ->
+	io:format("Node conversion naively: ~p~n", [Node]),
+	NewData = convert_node_data(Node#milang_ast.data, Translations),
+	Node#milang_ast{ data = NewData};
+convert_node(Wut, _Translations) ->
+	io:format("Not an ast node, likely something from a data that got through: ~p~n", [Wut]),
+	Wut.
+
+convert_node_data(Map, Translations) when is_map(Map) ->
+	Mapper = fun
+		(_K, Values) when is_list(Values) ->
+			[convert_node(V, Translations) || V <- Values];
+		(_K, Value) ->
+			convert_node(Value, Translations)
+	end,
+	maps:map(Mapper, Map);
+convert_node_data(List, Translations) when is_list(List) ->
+	[ convert_node(E, Translations) || E <- List ];
+convert_node_data(Data, _Translations) ->
+	Data.

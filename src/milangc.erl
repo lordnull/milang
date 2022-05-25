@@ -137,6 +137,7 @@ compile(#{ input_file := InFile } = Options) ->
 maybe_create_header(_AST, #{ ouput_header_file := false}) ->
 	ok;
 maybe_create_header(AST, Options) ->
+	io:format("Creating header..."),
 	#{ work_dir := WorkDir, input_file := InputFile } = Options,
 	ShortName = (filename:rootname(filename:basename(InputFile))) ++ ".milang-header",
 	HeaderName = filename:join(WorkDir, ShortName),
@@ -144,11 +145,13 @@ maybe_create_header(AST, Options) ->
 	milang_header:create_header(AST, FD).
 
 maybe_create_beam(_, _) ->
+	io:format("Creating beam not yet supported."),
 	ok.
 
 maybe_create_exe(_AST, #{ executable := false}) ->
 	ok;
 maybe_create_exe(AST, Options) ->
+	io:format("Creating executable script..."),
 	#{ input_file := InFile, output_file := OutFile, work_dir := WorkDir, search_dirs := SearchDirs } = Options,
 	CompileOpts =
 		[ {input_file_name, InFile}

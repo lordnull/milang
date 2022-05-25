@@ -1,4 +1,16 @@
-{'String', {type, 'String', [], []}}.
-{'Unit', {type, 'Unit', [], []}}.
-{'Never', {type, 'Never', [], ['Never']}}.
-{'List', {type, 'List', [], ['element']}}.
+
+-type Core.String | Core.String.
+
+-type Core.Integer | Core.Integer.
+
+-type Core.Unit | Core.Unit.
+
+-type Core.Never | Core.RecurseForever Core.Never.
+
+-type Core.List a | Core.Cons a ( Core.List a) | Core.Nil.
+
+Core.'|>' : a -> (a -> b) -> b.
+
+Core.'<|' : (a -> b) -> a -> b.
+
+Core.always : a -> (_ -> a).

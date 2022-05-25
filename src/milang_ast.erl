@@ -4,12 +4,7 @@
 -type location() :: {pos_integer(), pos_integer()}.
 -type doc() :: unicode:unicode_binary().
 
--record(milang_ast, {
-	type :: atom(),
-	location = {1,1} :: location(),
-	doc = <<>> :: doc(),
-	data
-}).
+-include("milang_ast.hrl").
 
 -type constraints() :: [ {atom(), type_concrete() }].
 
@@ -147,7 +142,9 @@
 	.
 
 -export_type(
-	[ast_node/0
+	[doc/0
+	,location/0
+	,ast_node/0
 	,constraints/0
 	,declaration_module/0
 	,declaration_import/0
@@ -207,12 +204,29 @@
 	,class_member_default/5
 	,declaration_function/6
 	,binding/4
+	,local_to_remote_name/2
 	]).
 -export([set_doc/2, to_map/1, to_string/1, type/1, location/1, doc/1, data/1]).
+
+local_to_remote_name(Remote, #milang_ast{ type = function_name_local } = Node) ->
+	LocalName = Node#milang_ast.data,
+	NewData = #{ name => LocalName, module => Remote },
+	Node#milang_ast{ type = function_name_remote, data = NewData};
+local_to_remote_name(Remote, #milang_ast{ type = function_name_symbol } = Node) ->
+	LocalName = Node#milang_ast.data,
+	NewData = #{ name => LocalName, module => Remote },
+	Node#milang_ast{ type = function_name_remote, data = NewData};
+local_to_remote_name(Remote, #milang_ast{ type = type_name_local } = Node) ->
+	LocalName = Node#milang_ast.data,
+	NewData = #{ name => LocalName, module => Remote },
+	Node#milang_ast{ type = type_name_remote, data = NewData};
+local_to_remote_name(_Remote, Node) ->
+	Node.
 
 to_a(B) -> binary_to_atom(B, utf8).
 
 to_string(Node) ->
+	io:format("Das node to_string: ~p~n", [Node]),
 	to_string(milang_ast:type(Node), milang_ast:doc(Node), milang_ast:data(Node)).
 
 to_string(constraints, _, []) ->
@@ -247,7 +261,7 @@ to_string(declaration_import, _, Data) ->
 	[Prefix, Alias, ExposingPrefix, Contents, Suffix, "\n"];
 to_string(declaration_alias, _, Data) ->
 	#{ name := Name, constraints := Constraints, args := Args, original := Original} = Data,
-	NameStr = io_lib:format("~s", [Name]),
+	NameStr = to_string(Name),
 	ConstraintsSection = to_string(constraints, "", Constraints),
 	ArgsList = lists:map(fun(V) ->
 		[" ", to_string(V)]
@@ -256,7 +270,7 @@ to_string(declaration_alias, _, Data) ->
 	["-alias", ConstraintsSection, " ", NameStr, ArgsList, " = ", TheOriginal, " .\n\n"];
 to_string(declaration_type, _, Data) ->
 	#{ name := Name, args := Args, constraints := Constraints, constructors := Constructors } = Data,
-	NameStr = io_lib:format("~s", [Name]),
+	NameStr = to_string(Name),
 	ConstraintSection = to_string(constraints, "", Constraints),
 	ArgsList = lists:map(fun(E) ->
 		[" ", to_string(E)]
@@ -399,12 +413,18 @@ to_string(literal_integer, _, Data) ->
 to_string(type_data, _, Data) ->
 	#{ name := Name, args := Args } = Data,
 	ArgsFun = fun(A) ->
-		case milang_ast:type(A) of
-			type_data ->
+		AType = A#milang_ast.type,
+		AData = A#milang_ast.data,
+		case {AType, AData} of
+			{type_data, #{ args := []}} ->
 				["( ", to_string(A), " )"];
-			type_record ->
+			{type_record, _} ->
 				to_string(A);
-			variable ->
+			{variable, _} ->
+				to_string(A);
+			{type_name_remote, _} ->
+				to_string(A);
+			{type_name_local, _} ->
 				to_string(A);
 			_ ->
 				["( ", to_string(A), " )"]
@@ -429,18 +449,20 @@ to_string(type_function, _, Data) ->
 	Mapped = lists:map(MapperFun, Data),
 	lists:join(" -> ", Mapped);
 to_string(type_record, _, Data) ->
-	Mapper = fun({Key, Value}) ->
-		KeyStr = if
-			is_integer(Key) ->
-				integer_to_binary(Key);
-			is_atom(Key) ->
-				atom_to_binary(Key)
-		end,
-		ValueStr = to_string(Value),
-		["\n, ", KeyStr, " = ", ValueStr]
+	Mapper = fun(Node) ->
+		["\n", to_string(Node)]
 	end,
 	Mapped = lists:map(Mapper, Data),
 	["{", Mapped, "}"];
+to_string(record_field, _, Data) ->
+	#{ key := Key, value := Value } = Data,
+	KeyString = if
+		is_atom(Key) ->
+			atom_to_binary(Key);
+		is_integer(Key) ->
+			integer_to_binary(Key)
+	end,
+	[", ", KeyString, " = ", to_string(Value) ];
 to_string(variable, _, Name) ->
 	atom_to_binary(Name);
 to_string(Wut, _, _) ->
