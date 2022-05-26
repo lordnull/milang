@@ -141,17 +141,20 @@ infix() ->
 	parse:first_of([ infix_notation(), infix_symbol() ]).
 
 infix_notation() ->
-	Weight = parse:repeat(1, infinity, parse:character($|)),
-	Arrow = parse:first_of([parse:character($>), parse:character($<)]),
+	WeightAndAssoc = parse:regex(<<"«+|»+"/utf8>>, first),
 	Function = parse:first_of([function_name(), infix_symbol()]),
-	Sequence = parse:series([Weight, Arrow, Function]),
+	Sequence = parse:series([WeightAndAssoc, Function]),
 	Tagged = parse:tag(infix_notation, Sequence),
-	Mapper = fun({T, L, [WeightChars, ArrowChar, FunctionAst]}) ->
+	Mapper = fun({T, L, [[WeightAndAssocChars], FunctionAst]}) ->
+		<<ArrowChar/utf8, _/binary>> = WeightAndAssocChars,
+		Weight = round(size(WeightAndAssocChars) / 2), % the « and » are each 2 bytes.
 		Assoc = case ArrowChar of
-			$> -> left;
-			$< -> right
+			$« ->
+				right;
+			$» ->
+				left
 		end,
-		Data = #{ assoc => Assoc, weight => length(WeightChars), function => FunctionAst},
+		Data = #{ assoc => Assoc, weight => Weight, function => FunctionAst},
 		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tagged, Mapper).

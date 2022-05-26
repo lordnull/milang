@@ -71,6 +71,15 @@
 
 -type type_entry() :: t_constructor() | t_type() | t_function() | t_concrete() | t_alias().
 
+-type t_variable() :: {type_variable, atom()}.
+
+-type checkable_type()
+	:: type_entry()
+	|  milang_ast:ast_node()
+	|  t_variable()
+	|  [ checkable_type() ]
+	.
+
 -type lookup_table() :: nonempty_list( #{ name() => type_entry()} ).
 
 -export_type([type_entry/0, lookup_table/0, name/0]).
@@ -83,6 +92,7 @@ new() ->
 validate_list(Nodes, Table) ->
 	do_validate_list(Nodes, {ok, Table}).
 
+-spec do_validate_list([ milang_ast:ast_node()], {ok, lookup_table()} | {error, term()}) -> {ok, lookup_table()} | {error, term()}.
 do_validate_list([], Done) ->
 	Done;
 do_validate_list(_, {error, _} = Done) ->
@@ -96,6 +106,7 @@ do_validate_list([ Node | Tail], {ok, Table}) ->
 		, [ Node, Result, Table]),
 	do_validate_list(Tail, Result).
 
+-spec validate_node(milang_ast:ast_node(), lookup_table()) -> {ok, lookup_table()} | {error, term()}.
 validate_node(#milang_ast{ type = declaration_module }, Table) ->
 	{ok, Table};
 validate_node(#milang_ast{ type = declaration_import} = Node, Table) ->
@@ -153,7 +164,6 @@ validate_node(#milang_ast{ type = declaration_function } = Node, Table) ->
 	MaybeArgTypes = maybe_type_of_nodes(Args, MaybeWithArgs),
 
 	MaybeWithBindings = maybe_load_bindings(MaybeFunctionType, MaybeWithArgs, Bindings),
-	%MaybeValidatedExpression = maybe_validate_node(Expression, MaybeWithBindings),
 	MaybeReturnType = maybe_type_of_nodes(Expression, MaybeWithBindings),
 
 	MaybeFullType = maybe_combine_type(MaybeArgTypes, MaybeReturnType),
@@ -194,16 +204,13 @@ validate_node(#milang_ast{ type = literal_string } , Table) ->
 validate_node(Node, Table) ->
 	{error, {nyi, Node, Table}}.
 
-maybe_validate_node(Node, {ok, Table}) ->
-	validate_node(Node, Table);
-maybe_validate_node(_Node, Error) ->
-	Error.
-
+-spec maybe_load_args({ok, type_entry()} | {error, term()}, [ milang_ast:ast_node() ], lookup_table()) -> {ok, lookup_table()} | {error, term()}.
 maybe_load_args({ok, FuncType}, Args, Table) ->
 	load_args(FuncType#function.types, Args, {ok, Table});
 maybe_load_args(Error, _, _) ->
 	Error.
 
+-spec load_args([ type_entry() ], [ milang_ast:ast_node()], {ok, lookup_table()} | {error, term()}) -> {ok, lookup_table()} | {error, term()}.
 load_args(_FuncType, [], {ok, _} = Ok) ->
 	Ok;
 load_args([Type | TypeTail], [ArgAST | ArgTail], {ok, Table}) ->
@@ -220,6 +227,7 @@ load_args([], _MoreArgs, {ok, _Table}) ->
 load_args(_, _, Error) ->
 	Error.
 
+-spec maybe_load_bindings({ok, type_entry()} | {error, term()}, {ok, lookup_table()} | {error, term()}, milang_ast:ast_node()) -> {ok, lookup_table()} | {error, term()}.
 maybe_load_bindings({ok, _FuncType}, {ok, _} = OkTable, Bindings) ->
 	load_bindings(Bindings, OkTable);
 maybe_load_bindings({ok, _}, NotOkay, _) ->
@@ -227,6 +235,7 @@ maybe_load_bindings({ok, _}, NotOkay, _) ->
 maybe_load_bindings(NotOkay, _, _) ->
 	NotOkay.
 
+-spec load_bindings([ milang_ast:ast_node() ], {ok, lookup_table()} | {error, term()}) -> {error, term()}.
 load_bindings([], {ok, _} = Ok) ->
 	Ok;
 load_bindings([Binding | BTail], {ok, Table}) ->
@@ -240,31 +249,31 @@ load_bindings([Binding | BTail], {ok, Table}) ->
 			Error
 	end.
 
+-spec maybe_combine_type({error, term()} | {ok, type_entry() | [ type_entry() ]}, {error, term()} | {ok, type_entry() | [ type_entry() ]}) -> {error, term()} | [ type_entry() ].
 maybe_combine_type({error, _} = Error, _) ->
 	Error;
 maybe_combine_type(_, {error, _} = Error) ->
 	Error;
-maybe_combine_type({ok, Head}, {ok, Tail}) ->
+maybe_combine_type({ok, Head}, {ok, Tail}) when is_list(Head), is_list(Tail) ->
 	io:format("Dash head: ~p~ndas tail: ~p~n", [Head, Tail]),
-	Head ++ Tail.
+	Head ++ Tail;
+maybe_combine_type({ok, Head} = OkHead, {ok, Tail}) when is_list(Head) ->
+	maybe_combine_type(OkHead, {ok, [Tail]});
+maybe_combine_type({ok, Head}, Tail) ->
+	maybe_combine_type({ok, [Head]}, Tail).
 
-
+-spec maybe_check_type_match({ok, type_entry()} | {error, term()}, {ok, milang_ast:ast_node()} | {error, term()}, {ok, lookup_table()} | {error, term()}) -> {ok, lookup_table()} | {error, term()}.
 maybe_check_type_match({error, _} = Error, _, _) ->
 	Error;
 maybe_check_type_match(_, {error, _} = Error, _) ->
 	Error;
 maybe_check_type_match(_, _, {error, _} = Error) ->
 	Error;
-maybe_check_type_match({ok, FunctionType}, Nodes, Table) ->
-	maybe_check_type_match(FunctionType, Nodes, Table);
-maybe_check_type_match(FunctionType, {ok, Nodes}, Table) ->
-	maybe_check_type_match(FunctionType, Nodes, Table);
-maybe_check_type_match(FunctionType, Nodes, {ok, Table}) ->
-	maybe_check_type_match(FunctionType, Nodes, Table);
-maybe_check_type_match(FunctionType, Nodes, Table) ->
+maybe_check_type_match({ok, FunctionType}, {ok, Nodes}, {ok, Table}) ->
 	check_type_match(FunctionType, Nodes, Table).
 
 
+-spec check_type_match(checkable_type(), checkable_type(), lookup_table()) -> {ok, lookup_table()} | {error, term()}.
 check_type_match(_Type, undefined, Table) ->
 	{ok, Table};
 check_type_match(#function{} = Func, Args, Table) when is_list(Args) ->
@@ -301,13 +310,14 @@ check_type_match(_, {type_variable, '_'}, Table) ->
 	{ok, Table};
 check_type_match([Known], UnKnown, Table) ->
 	check_type_match(Known, UnKnown, Table);
-check_type_match(#concrete{} = Known, #concrete{} = UnKnown, Table) when Known =/= UnKnown ->
+check_type_match(#concrete{} = Known, #concrete{} = UnKnown, _Table) when Known =/= UnKnown ->
 	io:format("reasonably certain we have a type mismatch:~nKnown: ~p~nUnknown: ~p~n", [Known, UnKnown]),
 	{error, {type_mismatch, Known, UnKnown}};
 check_type_match(Known, UnKnown, _Table) ->
 	io:format("marker for check_type_match failure finding"),
 	{error, {nyi, check_type_match, Known, UnKnown}}.
 
+-spec update_type_variable(t_variable(), type_entry(), milang_ast:ast_node() | type_entry()) -> milang_ast:ast_node() | type_entry().
 update_type_variable(TypeVariable, Replacement, List) when is_list(List) ->
 	lists:map(fun(E) ->
 		update_type_variable(TypeVariable, Replacement, E)
@@ -327,6 +337,7 @@ update_type_variable(TypeVariable, Replacement, Tuple) when is_tuple(Tuple) ->
 update_type_variable(_TypeVariable, _Replacement, Term) ->
 	Term.
 
+-spec add_module_alias(atom(), atom(), lookup_table()) -> lookup_table().
 add_module_alias(_NameActual, undefined, Table) ->
 	Table;
 add_module_alias(NameActual, Alias, Table) ->
@@ -338,6 +349,7 @@ add_module_alias(NameActual, Alias, Table) ->
 		set_entry(NewKey, Entry, Acc)
 	end, Table, KeysForModule).
 
+-spec add_direct_imports(atom(), milang_ast:ast_node(), lookup_table()) -> lookup_table().
 add_direct_imports(NameActual, DirectImports, Table) ->
 	JustNames = [ E#milang_ast.data || E <- DirectImports ],
 	lists:foldl(fun(LocalName, Acc) ->
@@ -345,6 +357,7 @@ add_direct_imports(NameActual, DirectImports, Table) ->
 		set_entry(LocalName, Entry, Acc)
 	end, Table, JustNames).
 
+-spec refine_entry(name(), type_entry(), lookup_table()) -> {ok, lookup_table()} | {error, term()}.
 refine_entry(Name, Refinement, Table) ->
 	case add_entry(Name, Refinement, Table) of
 		{ok, _} = Ok ->
@@ -358,6 +371,7 @@ refine_entry(Name, Refinement, Table) ->
 			end
 	end.
 
+-spec refine(undefined | type_entry(), undefined | type_entry()) -> {ok, type_entry()} | {error, term()}.
 refine(undefined, Old) ->
 	{ok, Old};
 refine(New, undefined) ->
@@ -365,11 +379,13 @@ refine(New, undefined) ->
 refine(New, Old) ->
 	{error, {nyi, refine, New, Old}}.
 
+-spec maybe_type_of_nodes(milang_ast:ast_node() | [milang_ast:ast_node()], {ok, lookup_table()} | {error, term()}) -> {ok, type_entry()} | {error, term()}.
 maybe_type_of_nodes(_, {error, _} = Error) ->
 	Error;
 maybe_type_of_nodes(Nodes, {ok, Table}) ->
 	type_of_nodes(Nodes, Table).
 
+-spec type_of_nodes(milang_ast:ast_node() | [ milang_ast:ast_node() ], lookup_table()) -> {ok, type_entry()} | {error, term()}.
 type_of_nodes(Nodes, Table) when is_list(Nodes) ->
 	types_of_nodes(Nodes, Table);
 type_of_nodes(#milang_ast{ type = type_function } = Node, Table) ->
@@ -434,9 +450,11 @@ type_of_nodes(#milang_ast{ type = expression_call } = Node, Table) ->
 type_of_nodes(Nodes, Table) ->
 	{error, {nyi, type_of_nodes, Nodes, Table}}.
 
+-spec types_of_nodes([ milang_ast:ast_node()], lookup_table()) -> {ok, [ type_entry() ]} | {error, term()}.
 types_of_nodes(Nodes, Table) ->
 	types_of_nodes(Nodes, Table, []).
 
+-spec types_of_nodes([ milang_ast:ast_node()], lookup_table(), [ type_entry()]) -> {ok, [ type_entry()]} | {error, term()}.
 types_of_nodes([], _Table, Acc) ->
 	{ok, lists:reverse(Acc)};
 types_of_nodes([ Head | Tail], Table, Acc) ->
@@ -447,6 +465,7 @@ types_of_nodes([ Head | Tail], Table, Acc) ->
 			Error
 	end.
 
+-spec merge_types(checkable_type(), checkable_type()) -> {ok, type_entry()} | {error, term()}.
 merge_types(A, A) ->
 	{ok, A};
 merge_types(A, undefined) ->

@@ -8,7 +8,7 @@
 string(Binary) ->
 	parse:it(Binary, milang_p:module()).
 
--spec file(file:filename()) -> {ok, milang_ast(), unicode:unicode_binary()} | {error, tuple()}.
+-spec file(file:filename()) -> {ok, milang_ast()} | {error, tuple()}.
 file(Filename) ->
 	case file:open(Filename, [read, binary]) of
 		{ok, Handle} ->
@@ -19,7 +19,7 @@ file(Filename) ->
 
 -define(chunk_size, 10000).
 
--spec parse_file(file:io_device()) -> {ok, milang_ast(), unicode:unicode_binary()} | {error, tuple()}.
+-spec parse_file(file:io_device()) -> {ok, milang_ast()} | {error, tuple()}.
 parse_file(Handle) ->
 	parse_file("", Handle, _AstAcc = [], _StringLeft = <<>>).
 

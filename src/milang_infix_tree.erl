@@ -100,7 +100,7 @@ weight_to_assoc([ {Op, _} | Tail], Map) ->
 	assoc = left :: 'left' | 'right',
 	left :: #milang_ast{} | #op_rec{},
 	right :: #milang_ast{} | #op_rec{},
-	op = '' :: atom()
+	op = '' :: atom() | #milang_ast{}
 }).
 
 maybe_tree_to_ast({error, _} = Error) ->
@@ -123,12 +123,12 @@ tree_to_ast(Op) ->
 	end,
 	FunctionName = case Op#op_rec.op of
 		A when is_atom(A) ->
-			milang_ast:ast_node({0,0}, <<>>, function_name_local, A);
+			milang_ast:ast_node({1,1}, <<>>, function_name_local, A);
 		NotAtom ->
 			NotAtom
 	end,
 	CallData = #{ name => FunctionName, args => [NewLeft, NewRight] },
-	milang_ast:ast_node({0,0}, <<>>, expression_call, CallData).
+	milang_ast:ast_node({1,1}, <<>>, expression_call, CallData).
 
 maybe_to_tree(_OpList, {error, _} = Error) ->
 	Error;

@@ -9,6 +9,6 @@ ints_are_not_strings_test_d() ->
 	>>,
 	{ok, [Spec, Func], <<>>} = milang_parse:string(Source),
 	EmptyTable = milang_type_validation:new(),
-	{ok, UpdatedTable} = milang_type_validation:validate(Spec, EmptyTable),
+	{ok, UpdatedTable} = milang_type_validation:validate_list([Spec, Func], EmptyTable),
 	Got = milang_type_validation:validate(Func, UpdatedTable),
 	?assertNotMatch({ok, _}, Got).
