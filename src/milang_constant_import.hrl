@@ -6,8 +6,7 @@
 	,Unit
 	,Never
 	,List
-	,'|>'
-	,'<|'
+	,'|'
 	,always
 	].
 ">>).

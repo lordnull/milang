@@ -9,8 +9,6 @@
 
 -type Core.List a | Core.Cons a ( Core.List a) | Core.Nil.
 
-Core.'|>' : a -> (a -> b) -> b.
-
-Core.'<|' : (a -> b) -> a -> b.
+Core.'|' : a -> (a -> b) -> b.
 
 Core.always : a -> (_ -> a).

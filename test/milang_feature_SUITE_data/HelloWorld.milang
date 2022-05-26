@@ -5,4 +5,4 @@
 main : List String -> Integer.
 main _ ->
 	ln "Hello, World!"
-	|> always 0.
+	| always 0.

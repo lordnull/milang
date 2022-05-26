@@ -256,7 +256,7 @@ maybe_combine_type(_, {error, _} = Error) ->
 	Error;
 maybe_combine_type({ok, Head}, {ok, Tail}) when is_list(Head), is_list(Tail) ->
 	io:format("Dash head: ~p~ndas tail: ~p~n", [Head, Tail]),
-	Head ++ Tail;
+	{ok, Head ++ Tail};
 maybe_combine_type({ok, Head} = OkHead, {ok, Tail}) when is_list(Head) ->
 	maybe_combine_type(OkHead, {ok, [Tail]});
 maybe_combine_type({ok, Head}, Tail) ->

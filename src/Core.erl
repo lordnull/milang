@@ -1,8 +1,7 @@
 -module('Core').
 
 -export(
-	[ '|>'/2
-	, '<|'/2
+	[ '|'/2
 	, always/1
 	, identity/0
 	]).
@@ -13,8 +12,5 @@ identity() ->
 always(A) ->
 	fun(_) -> A end.
 
-'|>'(Input, Func) ->
-	Func(Input).
-
-'<|'(Func, Input) ->
+'|'(Input, Func) ->
 	Func(Input).

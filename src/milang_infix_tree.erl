@@ -70,11 +70,16 @@
 -export([from_ast/1]).
 
 from_ast(#milang_ast{ type = expression } = Node) ->
+	io:format("Start of expression handling: ~p~n", [Node]),
 	Data = Node#milang_ast.data,
 	#{ infix_ops := InfixOps } = Data,
+	io:format("Infix ops: ~p~n", [InfixOps]),
 	Head = maps:get(head, Data),
+	io:format("The head: ~p~n", [Head]),
 	MaybePriorToAssoc = weight_to_assoc(InfixOps),
+	io:format("wieghts and assoc: ~p~n", [MaybePriorToAssoc]),
 	MaybeTree = maybe_to_tree({Head, InfixOps}, MaybePriorToAssoc),
+	io:format("Dah tree: ~p~n", [MaybeTree]),
 	maybe_tree_to_ast(MaybeTree);
 from_ast(Node) ->
 	{ok, Node}.
@@ -91,6 +96,11 @@ weight_to_assoc([ {Op, _} | Tail], Map) ->
 			NewMap = Map#{ Weight => Assoc },
 			weight_to_assoc(Tail, NewMap);
 		{ok, Assoc} ->
+			weight_to_assoc(Tail, Map);
+		{ok, either} ->
+			NewMap = Map#{ Weight => Assoc },
+			weight_to_assoc(Tail, NewMap);
+		{ok, _ExistingAssoc} when Assoc =:= either ->
 			weight_to_assoc(Tail, Map);
 		{ok, _DifferAssoc} ->
 			{error, {operation_reversed_associativity, Op}}
@@ -109,6 +119,7 @@ maybe_tree_to_ast({ok, Tree}) ->
 	{ok, tree_to_ast(Tree)}.
 
 tree_to_ast(Op) ->
+	io:format("op tree to ast: ~p", [Op]),
 	NewLeft = case Op#op_rec.left of
 		#op_rec{} = Left ->
 			tree_to_ast(Left);
@@ -137,18 +148,8 @@ maybe_to_tree(OpList, {ok, Map}) ->
 	{ok, to_tree(OpList, Weights)}.
 
 to_tree({Head, []}, _WeightNoMatter) ->
+	io:format("Dah head!~n"),
 	Head;
-to_tree({Head, Ops}, [{Weight, left} | WeightTail] = AllWeight) ->
-	SplitFun = split_fun(Weight),
-	case lists:splitwith(SplitFun, Ops) of
-		{Ops, []} ->
-			to_tree({Head, Ops}, WeightTail);
-		{LeftOps, [{Op, NextHead} | OpTail]} ->
-			RawLeft = {Head, LeftOps},
-			Left = to_tree(RawLeft, WeightTail),
-			Right = to_tree({NextHead, OpTail}, AllWeight),
-			op_rec(Left, Op, Right)
-	end;
 to_tree(Ops, [{Weight, right} | WeightTail] = AllWeight) ->
 	{Head, ReversedOps} = reverse_oplist(Ops),
 	SplitFun = split_fun(Weight),
@@ -163,7 +164,19 @@ to_tree(Ops, [{Weight, right} | WeightTail] = AllWeight) ->
 			Left = to_tree(RawLeft, AllWeight),
 			op_rec(Left, Op, Right)
 	end;
+to_tree({Head, Ops}, [{Weight, _LeftOrEither} | WeightTail] = AllWeight) ->
+	SplitFun = split_fun(Weight),
+	case lists:splitwith(SplitFun, Ops) of
+		{Ops, []} ->
+			to_tree({Head, Ops}, WeightTail);
+		{LeftOps, [{Op, NextHead} | OpTail]} ->
+			RawLeft = {Head, LeftOps},
+			Left = to_tree(RawLeft, WeightTail),
+			Right = to_tree({NextHead, OpTail}, AllWeight),
+			op_rec(Left, Op, Right)
+	end;
 to_tree(Node, []) ->
+	io:format("dah node: ~p~n", [Node]),
 	Node.
 
 
@@ -184,7 +197,7 @@ split_fun(Weight) ->
 			#{weight := N} ->
 				N =/= Weight;
 			_ when is_atom(Data) ->
-				Weight == 1
+				Weight =/= 1
 		end
 
 	end.
@@ -195,14 +208,9 @@ split_fun(Weight) ->
 op_rec(Left, Op, Right) ->
 	{_Weight, Assoc} = weight_and_assoc(Op),
 	Data = Op#milang_ast.data,
-	RawFunction = maps:get(function, Data),
-	FunctionName = case RawFunction of
-		#milang_ast{ type = infix_symbol, data = '' } when Assoc =:= left ->
-			'|>';
-		#milang_ast{ type = infix_symbol, data = '' } when Assoc =:= right ->
-			'<|';
-		_ ->
-			RawFunction
+	FunctionName = case Data of
+		#{ function := F } -> F;
+		_ -> Data
 	end,
 	#op_rec{
 		assoc = Assoc,
@@ -212,15 +220,10 @@ op_rec(Left, Op, Right) ->
 	}.
 
 
-weight_and_assoc(Op) ->
-	case Op#milang_ast.data of
-		'>>' -> {0, left};
-		'<<' -> {0, right};
-		#{ function := '', assoc := Assoc} ->
-			{0, Assoc};
-		#{ weight := Weight, assoc := Assoc } ->
-			{Weight, Assoc}
-	end.
-
-
+weight_and_assoc(#milang_ast{ data = Data}) ->
+	weight_and_assoc(Data);
+weight_and_assoc(#{ assoc := Assoc, weight := Weight }) ->
+	{Weight, Assoc};
+weight_and_assoc(Op) when is_atom(Op) ->
+	{1, either}.
 
