@@ -115,7 +115,7 @@ beam_file(error, _ModuleName) ->
 	{error, no_beam}.
 
 rebuild_beam_if_needed(SrcPath, {error, no_beam}, error, BeamDir, _ModuleName) ->
-	compile:file(SrcPath, [{output_dir, BeamDir}, debug_info]);
+	compile:file(SrcPath, [{outdir, BeamDir}, debug_info]);
 rebuild_beam_if_needed(SrcPath, {ok, BeamFile}, ObjectCode, BeamDir, _ModuleName) ->
 	SrcFileInfo = file:read_file_info(SrcPath),
 	BeamFileInfo = file:read_file_info(BeamFile),
