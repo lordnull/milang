@@ -69,6 +69,7 @@
 
 -export([from_ast/1]).
 
+-spec from_ast(milang_ast:ast_node()) -> {ok, milang_ast:ast_node()} | {error, term()}.
 from_ast(#milang_ast{ type = expression } = Node) ->
 	io:format("Start of expression handling: ~p~n", [Node]),
 	Data = Node#milang_ast.data,

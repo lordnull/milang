@@ -134,7 +134,7 @@ compile(#{ input_file := InFile } = Options) ->
 			halt(2)
 	end.
 
-maybe_create_header(_AST, #{ ouput_header_file := false}) ->
+maybe_create_header(_AST, #{ output_header := false}) ->
 	ok;
 maybe_create_header(AST, Options) ->
 	io:format("Creating header..."),

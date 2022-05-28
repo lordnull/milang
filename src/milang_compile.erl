@@ -231,15 +231,14 @@ compile(#milang_ast{ type = declaration_import } = Dec, Stack, State) ->
 			NewSupport = [ Module | OldSupport ],
 			compile([], Stack, State#compile_state{ lookup_table = TableWithImport, support_modules = NewSupport})
 	end;
-compile(#milang_ast{ type = expression_call } = AST, Stack, StatePreTypecheck) ->
-	State = type_checking(AST, StatePreTypecheck),
+compile(#milang_ast{ type = expression_call } = AST, Stack, State) ->
 	#{ name := CallNameAST, args := Args} = AST#milang_ast.data,
 	{ModPart, FuncPart} = case CallNameAST of
 		#milang_ast{ type = function_name_remote, data = Data} ->
 			#{ name := Name, module := ModuleName } = Data,
 			{[$', atom_to_binary(ModuleName), $', $:], Name};
 		#milang_ast{ type = function_name_local, data = LocalName } ->
-			case milang_type_validation:resolve_name(LocalName, State#compile_state.lookup_table) of
+			case milang_type_validation:resolve_name({local, LocalName}, State#compile_state.lookup_table) of
 				{ok, Resolved} ->
 					function_name_to_mf(Resolved);
 				{error, notfound} ->
@@ -435,7 +434,7 @@ path_find(SearchDirs, File) ->
 
 function_name_to_mf(#{ module := Module, name := Function}) ->
 	{[$', atom_to_binary(Module, utf8), $', $:], Function};
-function_name_to_mf(Name) ->
+function_name_to_mf({local, Name}) ->
 	BinStr = atom_to_binary(Name, utf8),
 	case binary:split(BinStr, <<$.>>, [global]) of
 		[FunctionPart] ->

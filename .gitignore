@@ -12,6 +12,7 @@ milang.d
 /archive_support
 /system_headers
 /priv/archive_support/milang_curry.beam
+/test/*.beam
 
 # build artifacts
 milangc
