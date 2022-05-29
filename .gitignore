@@ -17,6 +17,7 @@ milang.d
 /priv/archive_support/milang_curry.beam
 /test/*.beam
 
-# build artifacts
+# build  and test artifacts
 milangc
 milang-work-dir
+logs
