@@ -2,6 +2,8 @@ PROJECT = milang
 PROJECT_DESCRIPTION = I'm crazy so I'm writting a language
 PROJECT_VERSION = 0.1.0
 
+ERLANG_OTP = OTP-25.0
+
 DEPS = getopt
 
 system_headers = Concurrency.milang-header Core.milang-header System.Print.milang-header

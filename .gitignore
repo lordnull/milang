@@ -4,6 +4,9 @@ deps
 .erlang.mk/
 milang.d
 
+# editor artifacts
+.vscode
+
 # os specific files
 .DS_STORE
 
