@@ -124,12 +124,12 @@ So, let's try something a little...different.
 
 -import Concurrency.
 
--type ConfigMessage
-	| SetGoober String
-	| GetGoober (Mailbox String String)
-	| SetPile Int
-	| GetPile (Mailbox Int Int)
-	.
+-type ConfigMessage [
+	, SetGoober String
+	, GetGoober (Mailbox String String)
+	, SetPile Int
+	, GetPile (Mailbox Int Int)
+	].
 
 -alias Config = Concurrency.Mailbox Unit ConfigMessage.
 
@@ -155,7 +155,7 @@ pile config ->
 
 mailbox_loop : File.ConfigFile -> Concurrency.Mailbox Unit ConfigMessage -> Unit.
 mailbox_loop config_file mailbox ->
-	case Concurrency.receive_first mailbox of {
+	case Concurrency.receive_first mailbox of [
 		, GetGoober reply ->
 			Concurrency.reply reply (File.magic_read "goober")
 			|> always (mailbox_loop config_file mailbox)
@@ -168,7 +168,7 @@ mailbox_loop config_file mailbox ->
 		, SetPile new_pile
 			File.magic_write "pile" new_pile
 			|> always (mailbox_loop config_file mailbox)
-	}.
+	].
 ```
 
 So this is very much like the F# style. We have an actor with an initial function
@@ -203,6 +203,12 @@ There shall be 1, and only 1, way to express the vast majority of ideas.
 This means that rather than a function being declarable differently 
 depending on if it is anonymouse or not, there is only 1 way to do it.
 Symbols have exactly 1 way to be written, and so forth.
+
+Things in the language that are lists are presented as literal lists. Same as
+records. For example, the constructors for a type is wrapped in a
+`[,Const1,Const2]` just like a user would create a list of `[,1,2,3]`. Bindings
+are declared as `{ , var1 = expres1, var2 = expres2 }` just as a user would
+create a record of `{, var1 = VarType, var2 = Var2Type }`.
 
 ## Erlang runtime
 

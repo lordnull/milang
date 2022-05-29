@@ -1,13 +1,13 @@
 
--type Core.String | Core.String.
+-type Core.String.
 
--type Core.Integer | Core.Integer.
+-type Core.Integer.
 
--type Core.Unit | Core.Unit.
+-type Core.Unit.
 
--type Core.Never | Core.RecurseForever Core.Never.
+-type Core.Never [, Core.RecurseForever Core.Never].
 
--type Core.List a | Core.Cons a ( Core.List a) | Core.Nil.
+-type Core.List a [, Core.Cons a ( Core.List a) , Core.Nil].
 
 Core.'|' : a -> (a -> b) -> b.
 

@@ -1,0 +1,27 @@
+-type CreateHeader.Temp [
+	, CreateHeader.Blue
+	, CreateHeader.Rare
+	, CreateHeader.MediumRare
+	, CreateHeader.Medium
+	, CreateHeader.MediumWell
+	, CreateHeader.Well
+	, CreateHeader.Char
+	].
+
+-type CreateHeader.Flavor [
+	, CreateHeader.Clean
+	, CreateHeader.Spice
+	, CreateHeader.Sweet
+	, CreateHeader.Buttery
+	, CreateHeader.Other Core.String
+	].
+
+-alias CreateHeader.Meal = {
+	, temp = CreateHeader.Temp
+	, flavor = CreateHeader.Flavor
+	, cut = Steak.Cut
+	}.
+
+CreateHeader.cook : Steak.Cut -> CreateHeader.Temp -> CreateHeader.Meal.
+
+CreateHeader.season : CreateHeader.Flavor -> CreateHeader.Meal -> CreateHeader.Meal.

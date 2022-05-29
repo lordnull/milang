@@ -24,21 +24,21 @@ valid_parse_test_() ->
 	, <<"-alias Goober = Slacks -> Remote.Shoes.">>
 	, <<"-alias when {, a = Eq } Goober a = Map Int a.">>
 %	% type declarations
-	, <<"-type Goober | Pants.">>
-	, <<"-type Goober\n  | Pants\n  | Slacks\n  .">>
-	, <<"-type Maybe a | Nothing | Just a .">>
-	, <<"-type Goober | Pants {, id = String , threadcount = Int } .">>
-	, <<"-type CollectionName | FirstName List String | SecondName SomeOtherType | ThirdName {, id = Yet.Another.Type } | FourthName (List String) .">>
-	, <<"-type CollectionNameWithNL\n    | FirstName List String\n    | SecondName SomeOtherType\n    | ThirdName Yet.Another.Type \n    | FourthName (List String) .">>
-	, <<"-type when {, q = Order } Flegle | DahList (List q) .">>
+	, <<"-type Goober [, Pants].">>
+	, <<"-type Goober\n [ , Pants\n  , Slacks\n ] .">>
+	, <<"-type Maybe a [ , Nothing , Just a ].">>
+	, <<"-type Goober [ , Pants {, id = String , threadcount = Int } ] .">>
+	, <<"-type CollectionName [ , FirstName List String , SecondName SomeOtherType , ThirdName {, id = Yet.Another.Type } , FourthName (List String) ] .">>
+	, <<"-type CollectionNameWithNL [\n    , FirstName List String\n    , SecondName SomeOtherType\n    , ThirdName Yet.Another.Type \n    , FourthName (List String) ].">>
+	, <<"-type when {, q = Order } Flegle [ , DahList (List q) ] .">>
 %	% type class declarations
-	, <<"-class SomeClass a | do_a_thing : a -> Bool .">>
-	, <<"-class WordyEq a | equal : a -> a -> Bool | not_equal : a -> a -> Bool .">>
-	, <<"-class SomeDefault a | useless x = not_here x. .">>
-	, <<"-class WordyEq a | equal : a -> a -> Bool | not_equal : a -> a -> Bool | not_equal x y = not (equal x y) . .">>
-	, <<"-class Eq a | '==' : a -> a -> Bool | '!=' : a -> a -> Bool | '==' x y = not ('!=' x y) . | '!=' x y = not ('==' x y). .">>
-	, <<"-class ClassName anArg\n    | funcName : anArg -> CompareResult .">>
-	, <<"-class when {, a = Eq } Classname a | yeah_a_thing : a -> Woot .">>
+	, <<"-class SomeClass a [ , do_a_thing : a -> Bool ] .">>
+	, <<"-class WordyEq a [ , equal : a -> a -> Bool , not_equal : a -> a -> Bool ] .">>
+	, <<"-class SomeDefault a [ , useless x = not_here x. ] .">>
+	, <<"-class WordyEq a [, equal : a -> a -> Bool , not_equal : a -> a -> Bool , not_equal x y = not (equal x y) .] .">>
+	, <<"-class Eq a [, '==' : a -> a -> Bool , '!=' : a -> a -> Bool , '==' x y = not ('!=' x y) . , '!=' x y = not ('==' x y). ].">>
+	, <<"-class ClassName anArg\n  [  , funcName : anArg -> CompareResult ].">>
+	, <<"-class when {, a = Eq } Classname a [, yeah_a_thing : a -> Woot ].">>
 %	% funciton specifications
 	, <<"specThisFunc:String.">>
 	, <<"specThisFunc : List String -> String.">>
@@ -68,12 +68,12 @@ valid_parse_test_() ->
 		]
 		.">>
 	, <<"withABinding q -> varp = Goober, frob q varp.">>
-	, <<"withAndInfifx e ->\n    Frob a |>pipe quux\n    .">>
+	, <<"withAndInfifx e ->\n    Frob a »pipe quux\n    ."/utf8>>
 	% formats that are used for headers. Essentially for headers we allow fully
 	% qualified names for basically anything.
-	, <<"-type SomeModule.T | SomeModule.First | SomeModule.Second SupportModule.Cool.">>
+	, <<"-type SomeModule.T [, SomeModule.First , SomeModule.Second SupportModule.Cool ].">>
 	, <<"-alias SomeModule.A = List Integer.">>
-	, <<"-class SomeModule.SomeClass a | do_a_thing : a -> Bool .">>
+	, <<"-class SomeModule.SomeClass a [, do_a_thing : a -> Bool ].">>
 	, <<"SomeModule.specThisFunc : SomeModule.T.">>
 	, <<"SomeModule.specThisFunc : SomeModule.T -> a -> Support.Cool.">>
 	],

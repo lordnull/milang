@@ -8,9 +8,9 @@
 
 -import Steak exposing [,Cut].
 
--type Temp | Blue | Rare | MediumRare | Medium | MediumWell | Well | Char.
+-type Temp [, Blue , Rare , MediumRare , Medium , MediumWell , Well , Char].
 
--type Flavor | Clean | Spice | Sweet | Buttery | Other Core.String.
+-type Flavor [, Clean , Spice , Sweet , Buttery , Other Core.String].
 
 -alias Meal = { , temp = Temp , flavor = Flavor, cut = Cut }.
 

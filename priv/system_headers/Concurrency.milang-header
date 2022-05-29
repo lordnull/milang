@@ -1,6 +1,6 @@
 
--type Concurrency.Actor error ok state | Concurrency.Actor error ok state.
+-type Concurrency.Actor error ok state .
 
--type Concurrency.Task error ok | Concurrency.Task error ok.
+-type Concurrency.Task error ok .
 
 Concurrency.do : Concurrency.Task error ok.

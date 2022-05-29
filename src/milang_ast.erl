@@ -275,19 +275,24 @@ to_string(declaration_type, _, Data) ->
 	ArgsList = lists:map(fun(E) ->
 		[" ", to_string(E)]
 	end, Args),
-	ConstructorSection = lists:map(fun(E) ->
-		["\n\t| ", to_string(E)]
-	end, Constructors),
-	["-type", ConstraintSection, " ", NameStr, ArgsList, ConstructorSection, "\n\t.\n\n"];
+	ConstructorSection = case Constructors of
+		[] ->
+			[];
+		_ ->
+			[$[, lists:map(fun(E) ->
+				["\n\t, ", to_string(E)]
+			end, Constructors), "\n\t]"]
+	end,
+	["-type", ConstraintSection, " ", NameStr, ArgsList, ConstructorSection, ".\n\n"];
 to_string(declaration_class, _, Data) ->
 	#{ name := Name, constraints := Constraints, args := Args, members := Members } = Data,
 	NameStr = io_lib:format("~s", [Name]),
 	ConstraintSection = to_string(constraints, "", Constraints),
 	ArgsList = lists:map(fun(E) -> [" ", to_string(E)] end, Args),
 	MembersSection = lists:map(fun(E) ->
-		["\n\t| ", to_string(E)]
+		["\n\t, ", to_string(E)]
 	end, Members),
-	["-class", ConstraintSection, " ", NameStr, ArgsList, MembersSection, "\n\t.\n\n"];
+	["-class", ConstraintSection, " ", NameStr, ArgsList, "[\n", MembersSection, "\n\t].\n\n"];
 to_string(class_member_definition, _, Data) ->
 	#{ name := Name, definition := Def } = Data,
 	[io_lib:format("~s ", [Name]), " : ", to_string(Def)];
@@ -314,13 +319,13 @@ to_string(type_name_remote, _, Data) ->
 	io_lib:format("~s.~s", [Module, Name]);
 to_string(infix_notation, _, Data) ->
 	#{ assoc := Assoc, weight := Weight, function := Func} = Data,
-	Pipes = [ $| || _ <- lists:seq(1, Weight)],
 	Arrow = case Assoc of
-		left -> $>;
-		right -> $<
+		left -> <<"»"/utf8>>;
+		right -> <<"«"/utf8>>
 	end,
+	Arrows = [ Arrow || _ <- lists:seq(1, Weight) ],
 	FunctionStr = to_string(Func),
-	[" ", Pipes, Arrow, FunctionStr];
+	[" ", Arrows, FunctionStr];
 to_string(infix_symbol, _, Name) ->
 	atom_to_binary(Name);
 to_string(function_name_local, _, Name) ->

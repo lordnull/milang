@@ -147,10 +147,14 @@ declaration_alias() ->
 	parse:map(Tagged, Mapped).
 
 declaration_type() ->
-	SeriesP = parse:series([parse:string(<<"-type">>), constraints_section(), space(), milang_p_atomic:type_name(), args_list(), constructors(), space_opt(), dot()]),
+	SeriesP = parse:series([parse:string(<<"-type">>), constraints_section(), space(), milang_p_atomic:type_name(), args_list(), parse:optional(constructors()), space_opt(), dot()]),
 	Tagged = parse:tag(declaration_type, SeriesP),
 	Mapper = fun({T, L, Series}) ->
-		[_TypeTag, Constraints, Doc1, Name, Args, Constructors, _, _Dot] = Series,
+		[_TypeTag, Constraints, Doc1, Name, Args, MaybeConstructors, _, _Dot] = Series,
+		Constructors = case MaybeConstructors of
+			[] -> [];
+			[C] -> C
+		end,
 		Docs = unicode:characters_to_binary(Doc1),
 		Data = #{ name => Name, args => Args, constraints => Constraints, constructors => Constructors },
 		milang_ast:ast_node(L, Docs, T, Data)
@@ -158,36 +162,38 @@ declaration_type() ->
 	parse:map(Tagged, Mapper).
 
 constructors() ->
-	parse:repeat(1, infinity, constructor_element()).
-
-constructor_element() ->
-	SeriesP = parse:series([space_opt(), parse:character($|), space_opt(), milang_p_type:data()]),
+	ListP = milang_p_atomic:list(milang_p_type:data()),
+	SeriesP = parse:series([space_opt(), ListP]),
 	Mapper = fun(Series) ->
-		[Doc1, _Pipe, Doc2, Data] = Series,
-		Docs = unicode:characters_to_binary([Doc1, "\n", Doc2]),
-		milang_ast:set_doc(Docs, Data)
+		[_, E] = Series,
+		E
 	end,
 	parse:map(SeriesP, Mapper).
 
+%constructor_element() ->
+%	SeriesP = parse:series([space_opt(), parse:character($,), space_opt(), milang_p_type:data()]),
+%	Mapper = fun(Series) ->
+%		[Doc1, _Pipe, Doc2, Data] = Series,
+%		Docs = unicode:characters_to_binary([Doc1, "\n", Doc2]),
+%		milang_ast:set_doc(Docs, Data)
+%	end,
+%	parse:map(SeriesP, Mapper).
+
 declaration_class() ->
 	ClassMembersP = class_members(),
-	SeriesP = parse:series([parse:string(<<"-class">>), constraints_section(), space(), milang_p_atomic:type_name(), args_list(), ClassMembersP, space_opt(), dot()]),
+	SeriesP = parse:series([parse:string(<<"-class">>), constraints_section(), space(), milang_p_atomic:type_name(), args_list(), space_opt(), ClassMembersP, space_opt(), dot()]),
 	Tagged = parse:tag(declaration_class, SeriesP),
-	Mapper = fun({T, L, [_DeclareType, Constraints, _, Name, Args, Members, _, _Dot]}) ->
+	Mapper = fun({T, L, [_DeclareType, Constraints, _, Name, Args, _, Members, _, _Dot]}) ->
 		Data = #{ name => Name, args => Args, constraints => Constraints, members => Members },
 		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
 
 class_members() ->
-	ElementsP = parse:lazy(fun() ->
-		SeriesP = parse:series([space_opt(), parse:character($|), space_opt(), class_member()]),
-		Mapper = fun([Doc1, _, Doc2, Member]) ->
-			milang_ast:set_doc([Doc1, "\n", Doc2], Member)
-		end,
-		parse:map(SeriesP, Mapper)
+	ElementP = parse:lazy(fun() ->
+		class_member()
 	end),
-	parse:repeat_until_error(ElementsP).
+	milang_p_atomic:list(ElementP).
 
 class_member() ->
 	parse:first_of([ class_member_definition(), class_member_default()]).
