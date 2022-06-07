@@ -6,7 +6,7 @@ success_fail_and_character_test_() ->
 	[ ?_assertEqual({ok, 5, <<"abc">>}, parse:it(<<"abc">>, parse:success(5)))
 	, ?_assertMatch({error, #{ reason := test }}, parse:it(<<"abc">>, parse:fail(test)))
 	, ?_assertEqual({ok, $a, <<"bc">>}, parse:it(<<"abc">>, parse:character($a)))
-	, ?_assertMatch({error, #{ reason := {expected, $c}}}, parse:it(<<"abc">>, parse:character($c)))
+	, ?_assertMatch({error, #{ reason := {expected, <<"c">>}}}, parse:it(<<"abc">>, parse:character($c)))
 	].
 
 string_test_() ->
@@ -23,8 +23,8 @@ string_test_() ->
 regex_test_() ->
 	[ ?_assertMatch({ok, [<<"a">>], <<"bc">>}, parse:it(<<"abc">>, parse:regex("\\w")))
 	, ?_assertMatch({ok, [<<"123">>], <<"xyz">>}, parse:it(<<"123xyz">>, parse:regex("\\d+")))
-	, ?_assertMatch({error, #{ reason := nomatch}}, parse:it(<<"abc">>, parse:regex("\\d")))
-	, ?_assertMatch({error, #{ reason := nomatch}}, parse:it(<<"abc123">>, parse:regex("\\d")))
+	, ?_assertMatch({error, #{ reason := {nomatch, "\\d"}}}, parse:it(<<"abc">>, parse:regex("\\d")))
+	, ?_assertMatch({error, #{ reason := {nomatch, "\\d"}}}, parse:it(<<"abc123">>, parse:regex("\\d")))
 	, ?_assertMatch({ok, [<<"hello">>, <<"ello">>, <<"ll">>], <<>>}, parse:it(<<"hello">>, parse:regex("h(e(ll)o)")))
 	].
 
@@ -56,19 +56,20 @@ chomp_test_() ->
 
 peek_test_() ->
 	[ ?_assertMatch({ok, [<<"a">>], <<"abc">>}, parse:it(<<"abc">>, parse:peek("[a-z]")))
-	, ?_assertMatch({error, #{ reason := nomatch }}, parse:it(<<"abc">>, parse:peek("[0-9]")))
+	, ?_assertMatch({error, #{ reason := {nomatch, "[0-9]" }}}, parse:it(<<"abc">>, parse:peek("[0-9]")))
 	].
 
 acc_test_() ->
 	SimpleAccumulator =
-		fun ({ok, _, _} = R, {[], TailResults}) ->
-			Results = [R | TailResults],
-			TotalC = lists:foldl(fun({ok, N, _}, A) -> A + N end, 0, Results),
-			AllV = [ RV || {ok, _, RV} <- Results],
-			{ok, TotalC, lists:reverse(AllV)};
-			({error, Wut}, _) ->
+		fun
+			({ok, _, _} = R, _, {[], TailResults}) ->
+				Results = [R | TailResults],
+				TotalC = lists:foldl(fun({ok, N, _}, A) -> A + N end, 0, Results),
+				AllV = [ RV || {ok, _, RV} <- Results],
+				{ok, TotalC, lists:reverse(AllV)};
+			({error, Wut}, _, _) ->
 				{error, Wut};
-			({ok, C, _} = R, {[Next | Tail], Results}) ->
+			({ok, C, _} = R, _, {[Next | Tail], Results}) ->
 				{next, C, Next, {Tail, [R | Results]}}
 		end,
 	Chomp = fun(_Location, <<C/utf8, _/binary>>) ->
@@ -77,7 +78,7 @@ acc_test_() ->
 			{error, nomatch}
 	end,
 	Parser = fun(_Location, _Subject) ->
-		{push, 0, Chomp, SimpleAccumulator, {[Chomp, Chomp], []}}
+		{push, 0, Chomp, {set_tag, acc_test}, SimpleAccumulator, {[Chomp, Chomp], []}}
 	end,
 	[ ?_assertMatch({ok, "abc", <<"">>}, parse:it(<<"abc">>, Parser))
 	, ?_assertMatch({ok, "bcd", <<"">>}, parse:it(<<"bcd">>, Parser))
@@ -92,8 +93,8 @@ and_then_test_() ->
 	end,
 	Parse = parse:andThen(FirstParse, Nexter),
 	[ ?_assertMatch({ok, $b, <<"c">>}, parse:it(<<"abc">>, Parse))
-	, ?_assertMatch({error, #{ reason := {expected, $b}}}, parse:it(<<"acb">>, Parse))
-	, ?_assertMatch({error, #{ reason := {expected, $a}}}, parse:it(<<"cba">>, Parse))
+	, ?_assertMatch({error, #{ reason := {expected, <<"b">>}}}, parse:it(<<"acb">>, Parse))
+	, ?_assertMatch({error, #{ reason := {expected, <<"a">>}}}, parse:it(<<"cba">>, Parse))
 	].
 
 first_of_test_() ->
@@ -109,7 +110,7 @@ first_of_test_() ->
 	, ?_assertMatch({ok, $c, <<"ba">>}, parse:it(<<"cba">>, ABCParse))
 	, ?_assertMatch({ok, $c, <<"ba">>}, parse:it(<<"cba">>, CBAParse))
 	, ?_assertMatch({ok, $c, <<"ba">>}, parse:it(<<"cba">>, BACParse))
-	, ?_assertMatch({error, #{ reason := {nomatch, _}}}, parse:it(<<"xyz">>, ABCParse))
+	, ?_assertMatch({error, #{ reason := [_, _, _] }}, parse:it(<<"xyz">>, ABCParse))
 	].
 
 series_test_() ->
@@ -119,9 +120,9 @@ series_test_() ->
 	Parse = parse:series([AParse, BParse, CParse]),
 	ParseMapped = parse:map(Parse, fun([A, B, C]) -> [{A}, {B}, {C}] end),
 	[ ?_assertMatch({ok, "abc", <<>>}, parse:it(<<"abc">>, Parse))
-	, ?_assertMatch({error, #{ reason := {expected, $a}}}, parse:it(<<"cba">>, Parse))
+	, ?_assertMatch({error, #{ reason := {step, 1, {expected, <<"a">>}}}}, parse:it(<<"cba">>, Parse))
 	, ?_assertMatch({ok, [{$a}, {$b}, {$c}], <<>>}, parse:it(<<"abc">>, ParseMapped))
-	, ?_assertMatch({error, #{ reason := {expected, $a}}}, parse:it(<<"cba">>, ParseMapped))
+	, ?_assertMatch({error, #{ reason := {step, 1, {expected, <<"a">>}}}}, parse:it(<<"cba">>, ParseMapped))
 	].
 
 
@@ -129,11 +130,21 @@ repeat_test_() ->
 	[ ?_assertMatch({ok, "aaa", <<>>}, parse:it(<<"aaa">>, parse:repeat_for(3, parse:character($a))))
 	, ?_assertMatch({ok, "aa", <<"aa">>}, parse:it(<<"aaaa">>, parse:repeat_for(2, parse:character($a))))
 	, ?_assertMatch({ok, "aaa", <<>>}, parse:it(<<"aaa">>, parse:repeat_at_most(3, parse:character($a))))
-	, ?_assertMatch({error, #{ reason := {expected, $a}}}, parse:it(<<"abbb">>, parse:repeat_for(2, parse:character($a))))
-	, ?_assertMatch({ok, "aaaa", <<"bcd">>}, parse:it(<<"aaaabcd">>, parse:repeat_until_error(parse:character($a))))
+	, ?_assertMatch({error, #{ reason := {expected, <<"a">>}}}, parse:it(<<"abbb">>, parse:repeat_for(2, parse:character($a))))
 	, ?_assertMatch({error, #{ reason := {too_many, 2}}}, parse:it(<<"aaaa">>, parse:repeat_at_most(2, parse:character($a))))
 	, ?_assertMatch({ok, "aaa", <<"bcd">>}, parse:it(<<"aaabcd">>, parse:repeat(2,5,parse:character($a))))
-	, ?_assertMatch({ok, "aaa", <<"bcd">>}, parse:it(<<"aaabcd">>, parse:repeat(2,infinity,parse:character($a))))
-	, ?_assertMatch({error, #{ reason := {expected, $a}}}, parse:it(<<"abcd">>, parse:repeat(2, 5, parse:character($a))))
-	, ?_assertMatch({error, #{ reason := {too_many, 3}}}, parse:it(<<"aaaaaabcd">>, parse:repeat(2, 5, parse:character($a))))
+	, ?_assertMatch({error, #{ reason := {expected, <<"a">>}}}, parse:it(<<"abcd">>, parse:repeat(2, 5, parse:character($a))))
+	, ?_assertMatch({error, #{ reason := {too_many, 5}}}, parse:it(<<"aaaaaabcd">>, parse:repeat(2, 5, parse:character($a))))
+	].
+
+repeat_until_test_() ->
+	[ ?_assertMatch({ok, {"aaa", $b}, <<>>}, parse:it(<<"aaab">>, parse:repeat_until(parse:character($a), parse:character($b))))
+	, ?_assertMatch({ok, {"aaa", $c}, <<>>}, parse:it(<<"aaac">>, parse:repeat_until(parse:character($a), parse:first_of([parse:character($b), parse:character($c)]))))
+	, ?_assertMatch({error, _}, parse:it(<<"aaad">>, parse:repeat_until(parse:character($a), parse:first_of([parse:character($b), parse:character($c)]))))
+	].
+
+repeat_when_test_() ->
+	[ ?_assertMatch({ok, "a.a.a", <<"b">>}, parse:it(<<"a.a.ab">>, parse:repeat_when(parse:character($a), parse:character($.))))
+	, ?_assertMatch({ok, [[<<"1">>], [<<"+">>], [<<"2">>], [<<"-">>], [<<"3">>]], <<"=0">>}, parse:it(<<"1+2-3=0">>, parse:repeat_when(parse:regex("\\d+"), parse:regex("[\\+\\-]"))))
+	, ?_assertMatch({error, _}, parse:it(<<"1+b-3=0">>, parse:repeat_when(parse:regex("\\d+"), parse:regex("[\\+\\-]"))))
 	].

@@ -68,7 +68,7 @@ valid_parse_test_() ->
 		]
 		.">>
 	, <<"withABinding q -> varp = Goober, frob q varp.">>
-	, <<"withAndInfifx e ->\n    Frob a »pipe quux\n    ."/utf8>>
+	, <<"withAnInfifx e ->\n    Frob a »pipe quux\n    ."/utf8>>
 	% formats that are used for headers. Essentially for headers we allow fully
 	% qualified names for basically anything.
 	, <<"-type SomeModule.T [, SomeModule.First , SomeModule.Second SupportModule.Cool ].">>

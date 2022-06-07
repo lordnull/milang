@@ -16,18 +16,38 @@ parse(String) ->
 
 -spec expression() -> parse:parser(term(), milang_ast:expression()).
 expression() ->
-	TailElement = parse:series([opt_space(), milang_p_atomic:infix(), opt_space(), primary()]),
-	TailParser = parse:repeat_until_error(TailElement),
-	Series = parse:series([primary(), TailParser]),
-	Tagged = parse:tag(expression, Series),
+	Series = parse:repeat_when(opt_space(primary()), opt_space(milang_p_atomic:infix())),
+	Tagged = parse:tag(undefined, Series),
 	Mapper = fun
-		({_, _, [Head, []]}) ->
-			Head;
-		({T, L, [Head, DirtyTail]}) ->
-			Tail = [{milang_ast:set_doc(OpDoc, Op), milang_ast:set_doc(EDoc, E)} || [OpDoc, Op, EDoc, E] <- DirtyTail],
-			milang_ast:ast_node(L, <<>>, T, #{ head => Head, infix_ops => Tail})
+		({_, _, [Only]}) ->
+			Only;
+		({_, L, [Head | Tail]}) ->
+			InfixOps = pair_infix_ops(Tail),
+			Data = #{ head => Head, infix_ops => InfixOps},
+			milang_ast:ast_node(L, <<>>, expression, Data)
 	end,
 	parse:map(Tagged, Mapper).
+
+pair_infix_ops(List) ->
+	pair_infix_ops(List, []).
+
+pair_infix_ops([], Acc) ->
+	lists:reverse(Acc);
+pair_infix_ops([Op, Expr | Tail], Acc) ->
+	pair_infix_ops(Tail, [{Op, Expr} | Acc]).
+
+%	TailElement = parse:series([opt_space(milang_p_atomic:infix()), opt_space(primary())]),
+%	TailParser = parse:repeat_until_error(TailElement),
+%	Series = parse:series([primary(), TailParser]),
+%	Tagged = parse:tag(expression, Series),
+%	Mapper = fun
+%		({_, _, [Head, []]}) ->
+%			Head;
+%		({T, L, [Head, DirtyTail]}) ->
+%			Tail = [{milang_ast:set_doc(OpDoc, Op), milang_ast:set_doc(EDoc, E)} || [OpDoc, Op, EDoc, E] <- DirtyTail],
+%			milang_ast:ast_node(L, <<>>, T, #{ head => Head, infix_ops => Tail})
+%	end,
+%	parse:map(Tagged, Mapper).
 
 -spec primary() -> parse:parser(term(), milang_ast:expression_primary()).
 primary() ->
@@ -41,21 +61,21 @@ primary() ->
 
 -spec sub_expression() -> parse:parser(term(), milang_ast:expression_parens()).
 sub_expression() ->
-	Series = parse:series([parse:character($(), opt_space(), expression(), opt_space(), parse:character($))]),
-	Mapper = fun([_, Doc, E, _, _]) ->
-		milang_ast:set_doc(Doc, E)
+	Series = parse:series([parse:character($(), opt_space(expression()), opt_space(parse:character($)))]),
+	Mapper = fun([_OpenParen, E, _CloseParen]) ->
+		E
 	end,
 	parse:map(Series, Mapper).
 
 -spec call() -> parse:parser(term(), milang_ast:expression_call()).
 call() ->
 	Call = parse:first_of([ milang_p_atomic:function_name(), milang_p_atomic:type_name()]),
-	ArgsElement = parse:series([space(), argument()]),
-	Args = parse:repeat_until_error(ArgsElement),
+	ArgsElement = space(argument()),
+	Args = parse:repeat_when(parse:success(ok), ArgsElement),
 	Series = parse:series([Call, Args]),
 	Tagged = parse:tag(expression_call, Series),
-	Mapper = fun({T, L, [F, ArgsWithSpaces]}) ->
-		CleanedArgs = [milang_ast:set_doc(Doc, A) || [Doc, A] <- ArgsWithSpaces],
+	Mapper = fun({T, L, [F, ArgsWithOks]}) ->
+		CleanedArgs = [A || A <- ArgsWithOks, A =/= ok ],
 		milang_ast:ast_node(L, <<>>, T, #{ name => F, args => CleanedArgs})
 	end,
 	parse:map(Tagged, Mapper).
@@ -75,60 +95,57 @@ literal() ->
 		]).
 
 literal_list() ->
-	Element = parse:series([opt_space(), list_element()]),
-	Elements = parse:repeat_until_error(Element),
-	Series = parse:series([parse:character($[), Elements, opt_space(), parse:character($])]),
+	Element = opt_space(list_element()),
+	Elements = parse:repeat_until(Element, opt_space(parse:character($]))),
+	Series = parse:series([parse:character($[), Elements]),
 	Tagged = parse:tag(literal_list, Series),
-	Mapper = fun({T, L, [_, ElementsWithSpaces, _, _]}) ->
-		NewElements = [ E || [_, E] <- ElementsWithSpaces],
-		milang_ast:ast_node(L, <<>>, T, NewElements)
+	Mapper = fun({T, L, [_, {ParsedElements, _}]}) ->
+		milang_ast:ast_node(L, <<>>, T, ParsedElements)
 	end,
 	parse:map(Tagged, Mapper).
 
 list_element() ->
-	Series = parse:series([parse:character($,), opt_space(), expression()]),
-	Mapper = fun([_, Doc, E]) ->
-		milang_ast:set_doc(Doc, E)
+	Series = parse:series([parse:character($,), opt_space(expression())]),
+	Mapper = fun([_, E]) ->
+		E
 	end,
 	parse:map(Series, Mapper).
 
 literal_map() ->
-	Entry = parse:series([opt_space(), map_entry()]),
-	Entries = parse:repeat_until_error(Entry),
-	Series = parse:series([parse:string(<<"#{">>), opt_space(), Entries, opt_space(), parse:string(<<"}#">>)]),
+	Entry = opt_space(map_entry()),
+	Entries = parse:repeat_until(Entry, opt_space(parse:string(<<"}#">>))),
+	Series = parse:series([parse:string(<<"#{">>), Entries]),
 	Tagged = parse:tag(literal_map, Series),
-	Mapper = fun({T, L, [_, _, DirtyEntries, _, _]}) ->
-		CleanedEntries = [ E || [_, E] <- DirtyEntries],
-		milang_ast:ast_node(L, <<>>, T, CleanedEntries)
+	Mapper = fun({T, L, [_, {ParsedEntries, _}]}) ->
+		milang_ast:ast_node(L, <<>>, T, ParsedEntries)
 	end,
 	parse:map(Tagged, Mapper).
 
 map_entry() ->
-	Series = parse:series([parse:character($,), opt_space(), expression(), opt_space(), parse:character($=), opt_space(), expression()]),
+	Series = parse:series([parse:character($,), opt_space(expression()), opt_space(parse:character($=)), opt_space(expression())]),
 	Tagged = parse:tag(literal_map_entry, Series),
-	Mapper = fun({T, L, [_, KeyDoc, Key, _, _, ValueDoc, Value]}) ->
-		Data = #{ key => milang_ast:set_doc(KeyDoc, Key), value => milang_ast:set_doc(ValueDoc, Value) },
+	Mapper = fun({T, L, [_, Key, _Equals, Value]}) ->
+		Data = #{ key => Key, value => Value },
 		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
 
 literal_record() ->
-	Entry = parse:series([opt_space(), record_field()]),
-	Entries = parse:repeat_until_error(Entry),
-	Series = parse:series([parse:character(${), opt_space(), Entries, opt_space(), parse:character($})]),
+	Entry = opt_space(record_field()),
+	Entries = parse:repeat_until(Entry, opt_space(parse:character($}))),
+	Series = parse:series([parse:character(${), Entries]),
 	Tagged = parse:tag(literal_record, Series),
-	Mapper = fun({T, L, [_, _, DirtyFields, _, _]}) ->
-		CleanedFields = [ E || [_, E] <- DirtyFields],
-		milang_ast:ast_node(L, <<>>, T, CleanedFields)
+	Mapper = fun({T, L, [_, {ParsedFields, _}]}) ->
+		milang_ast:ast_node(L, <<>>, T, ParsedFields)
 	end,
 	parse:map(Tagged, Mapper).
 
 record_field() ->
-	Field = parse:series([parse:character($,), opt_space(), record_field_key(), opt_space(), parse:character($=), opt_space(), expression()]),
+	Field = parse:series([parse:character($,), opt_space(record_field_key()), opt_space(parse:character($=)), opt_space(expression())]),
 	Tagged = parse:tag(literal_record_field, Field),
-	Mapper = fun({T, L, [_, KeyDoc, Key, _, _, ValueDoc, Value]}) ->
-		Data = { Key, milang_ast:set_doc(ValueDoc, Value)},
-		milang_ast:ast_node(L, KeyDoc, T, Data)
+	Mapper = fun({T, L, [_, Key, _Equals, Value]}) ->
+		Data = { Key, Value},
+		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
 	parse:map(Tagged, Mapper).
 
@@ -142,7 +159,7 @@ record_field_key() ->
 	parse:first_of([ NameIdx, NumberIdx ]).
 
 literal_string() ->
-	% I appologize for all the slashes.
+	% I apologize for all the slashes.
 	% The original does not need to escape the double quotes. Nor did it need to
 	% escape the backslashes from another parser before it could get to the
 	% regex parser.
@@ -181,8 +198,8 @@ literal_integer() ->
 	end,
 	parse:map(Tagged, Mapper).
 
-opt_space() ->
-	parse:optional(milang_p_atomic:space()).
+opt_space(AfterSpace) ->
+	milang_p_atomic:space_opt_then(AfterSpace).
 
-space() ->
-	milang_p_atomic:space().
+space(AfterSpace) ->
+	milang_p_atomic:space_then(AfterSpace).
