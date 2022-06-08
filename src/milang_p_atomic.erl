@@ -51,8 +51,8 @@ list(ElementParser) ->
 	EndingP = space_opt_then(parse:character($])),
 	ListP = parse:repeat_until(ElementP, EndingP),
 	SeriesP = parse:series([parse:character($[), ListP]),
-	Mapper = fun([_, {E, _}]) ->
-		E
+	Mapper = fun([_, {EWithSpaces, _}]) ->
+		[E || [_, E] <- EWithSpaces]
 	end,
 	parse:set_tag(generic_list, parse:map(SeriesP, Mapper)).
 
@@ -68,7 +68,7 @@ record(KeyParser, ValueParser) ->
 	end),
 	ElementsP = parse:repeat_until(ElementP, space_opt_then(parse:character($}))),
 	SeriesP = parse:series([parse:character(${), ElementsP]),
-	Mapper = fun([_, Elements]) ->
+	Mapper = fun([_, {Elements, _ClosingBrace}]) ->
 		Elements
 	end,
 	parse:set_tag(generic_record, parse:map(SeriesP, Mapper)).

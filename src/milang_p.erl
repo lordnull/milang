@@ -33,7 +33,10 @@ upcase_name() ->
 
 -spec module() -> parse:parser(term(), [ milang_ast:ast_node() ]).
 module() ->
-	parse:repeat_until(space_opt(declaration()), space_opt(parse:end_of_input())).
+	WithTrailingSpace = parse:repeat_until(space_opt(declaration()), space_opt(parse:end_of_input())),
+	parse:map(WithTrailingSpace, fun({Declarations, ok}) ->
+		Declarations
+	end).
 
 declaration() ->
 	PeekRegex = "(-module|-import|-alias|-type|-class)",
@@ -93,7 +96,9 @@ exposing_list() ->
 
 declaration_import() ->
 	ModuleNamePart = milang_p_atomic:upcase_name(),
-	ModuleNameRepeatWhen = parse:series([parse:character($.), parse:test(ModuleNamePart)]),
+	ModuleNameRepeatWhen = parse:map(parse:series([parse:character($.), parse:test(ModuleNamePart)]), fun(_) ->
+		ok
+	end),
 	ModuleNameParts = parse:repeat_when(ModuleNamePart, ModuleNameRepeatWhen),
 	SeriesP = parse:series(
 		[ parse:string(<<"-import">>)
@@ -103,12 +108,14 @@ declaration_import() ->
 		, space_opt(dot())
 		]),
 	Tagged = parse:tag(declaration_import, SeriesP),
-	Mapper = fun({T, L, [_, ModuleUnjoined, Alias, MaybeExposing, _]}) ->
+	Mapper = fun({T, L, [_, ModuleUnjoinedWithOks, Alias, MaybeExposing, _]}) ->
 		Exposing = case MaybeExposing of
 			[] -> [];
 			[E] -> E
 		end,
-		Module = unicode:characters_to_binary(ModuleUnjoined),
+		ModuleUnjoined = [ M || M <- ModuleUnjoinedWithOks, M =/= ok],
+		Modulejoined = lists:join($., ModuleUnjoined),
+		Module = unicode:characters_to_binary(Modulejoined),
 		Data = #{ name => binary_to_atom(Module, utf8), alias => Alias, exposing => Exposing},
 		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
@@ -205,7 +212,11 @@ declaration_function() ->
 	NameP = milang_p_atomic:function_name_local(),
 	SeriesP = parse:series([NameP, args_list(), space_opt(parse:string(<<"->">>)), space_opt(function_bindings()), space_opt(milang_p_expression:expression()), space_opt( dot())]),
 	Tagged = parse:tag(declaration_function, SeriesP),
-	Mapper = fun({T, L, [Name, Args, _Equals, Bindings, Expression, _Dot]}) ->
+	Mapper = fun({T, L, [Name, MaybeArgs, _Equals, Bindings, Expression, _Dot]}) ->
+		Args = case MaybeArgs of
+			[] -> [];
+			_ -> hd(MaybeArgs)
+		end,
 		Data = #{ name => Name, args => Args, bindings => Bindings, expression => Expression },
 		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
@@ -217,8 +228,9 @@ function_bindings() ->
 	BindingMapper = fun({T, L, [Variable, _Equals, Expression, _Comma]}) ->
 		milang_ast:ast_node(L, <<>>, T, #{ name => Variable, expression => Expression})
 	end,
+	Binding = parse:map(BindingTagged, BindingMapper),
 	WhenCheck = parse:map(parse:series([space_opt(milang_p_atomic:variable()), space_opt(parse:character($=))]), fun(_) -> ok end),
-	RepeatedHasOks = parse:repeat_when(SeriesP, WhenCheck),
+	RepeatedHasOks = parse:repeat_when(Binding, WhenCheck),
 	Repeated = parse:map(RepeatedHasOks, fun(L) ->
 		[ E || E <- L, L =/= ok]
 	end),

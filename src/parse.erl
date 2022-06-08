@@ -14,9 +14,9 @@
 
 -type acc_result(Err, Ok, Acc) :: next(Err, Ok, Acc) | done(Err, Ok).
 
--type parse_accumulator(Err, Ok, Acc) :: fun((parse_terminal(_, _), Acc) -> acc_result(Err, Ok, Acc)).
+-type parse_accumulator(Err, Ok, Tag, Acc) :: fun((parse_terminal(_, _), parser_context(Tag), Acc) -> acc_result(Err, Ok, Acc)).
 
--type parse_push(Err, Ok, ContextTag, Acc) :: {push, non_neg_integer(), parser(_, _), {set_tag, ContextTag} | undefined, parse_accumulator(Err, Ok, Acc), Acc}.
+-type parse_push(Err, Ok, ContextTag, Acc) :: {push, non_neg_integer(), parser(_, _), {set_tag, ContextTag} | undefined, parse_accumulator(Err, Ok, ContextTag, Acc), Acc}.
 
 -type parse_non_terminal(Err, Ok, ContextTag, Acc) :: parse_push(Err, Ok, ContextTag, Acc).
 
@@ -24,7 +24,7 @@
 
 -type parser(Err, Ok, Acc) :: fun((location(), binary()) -> parse_result(Err, Ok, _, Acc)).
 
--type parse_stack_frame(Err, Ok, ContextTag, Acc) :: {unicode:unicode_binary(), location(), parse_accumulator(Err, Ok, Acc), Acc, parser_context(ContextTag)}.
+-type parse_stack_frame(Err, Ok, ContextTag, Acc) :: {unicode:unicode_binary(), location(), parse_accumulator(Err, Ok, ContextTag, Acc), Acc, parser_context(ContextTag)}.
 
 -type parse_stack(Err, Ok, Tag, Acc) :: [ parse_stack_frame(Err, Ok, Tag, Acc) ].
 
@@ -94,7 +94,7 @@ it(Binary, Parser) ->
 -spec default_acc(E, _, _) -> E.
 default_acc(E, _, _) -> E.
 
--spec parse(unicode:unicode_binary(), location(), parse_result(Err, Ok, Tag, Acc), parse_accumulator(Err, Ok, Acc), Acc, parser_context(Tag), parse_stack(Err, Ok, Tag, Acc)) -> parse_err(Err) | {ok, Ok, unicode:unicode_binary()}.
+-spec parse(unicode:unicode_binary(), location(), parse_result(Err, Ok, Tag, Acc), parse_accumulator(Err, Ok, Tag, Acc), Acc, parser_context(Tag), parse_stack(Err, Ok, Tag, Acc)) -> parse_err(Err) | {ok, Ok, unicode:unicode_binary()}.
 
 parse(Binary, Location, {push, Consume, NewParser, MaybeNewTag, NewAccFun, NewAccState}, AccFun, AccState, Context, Stack) ->
 	PushItem = {Binary, Location, AccFun, AccState, Context},
