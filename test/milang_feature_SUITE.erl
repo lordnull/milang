@@ -11,7 +11,12 @@ all() ->
 	].
 
 groups() ->
-	[{basic, [], [hello_world_test, type_error_test, header_creation_test]}
+	[{basic, [],
+		[ hello_world_test
+		, type_error_test
+		, header_creation_test
+		, comment_test
+		]}
 	].
 
 hello_world_test(Cfg) ->
@@ -123,3 +128,15 @@ strip_text_artifacts(Data) when is_list(Data) ->
 strip_text_artifacts(Term) ->
 	Term.
 
+
+
+comment_test(Cfg) ->
+	DataDir = proplists:get_value(data_dir, Cfg),
+	PrivDir = proplists:get_value(priv_dir, Cfg),
+	{ok, AST} = milang_parse:file(filename:join([DataDir, "CommentTest.milang"])),
+
+	OutputFile = filename:join([PrivDir, "CommentTest"]),
+	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
+	ok = milang_compile:compile(AST, [{input_file_name, "CommentTest.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
+	Result = os:cmd(OutputFile),
+	?assertEqual("", Result).

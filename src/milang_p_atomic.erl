@@ -9,7 +9,7 @@
 	, space_then/1
 	, space_opt_then/1
 	, whitespace/0
-	, comment_line/0
+	, comment/0
 	, type_name/0
 	%, type_name_local/0
 	%, type_name_remote/0
@@ -82,7 +82,7 @@ upcase_name() ->
 	parse:map(RegEx, fun([V]) -> V end).
 
 space() ->
-	parse:first_of([whitespace(), comment_line()]).
+	parse:first_of([whitespace(), comment()]).
 
 space_then(AfterSpace) ->
 	SpaceP = space_opt_then(AfterSpace),
@@ -102,10 +102,13 @@ space_opt_then(AfterSpace) ->
 whitespace() ->
 	parse:regex("\\s+").
 
-comment_line() ->
-	Series = parse:series([parse:string(<<"-doc">>), parse:regex("[ \\t]+"), parse:regex("[^\\n]*", first)]),
-	Mapper = fun([_, _, [String]]) ->
-		String
+comment() ->
+	Ending = parse:string(<<"-}">>),
+	MaybeNested = parse:first_of([parse:lazy(fun comment/0), parse:chomp()]),
+	Repeat = parse:repeat_until(MaybeNested, Ending),
+	Series = parse:series([parse:string(<<"{-">>), Repeat]),
+	Mapper = fun([_, {Doc, _}]) ->
+		Doc
 	end,
 	parse:map(Series, Mapper).
 

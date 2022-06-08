@@ -210,6 +210,165 @@ records. For example, the constructors for a type is wrapped in a
 are declared as `{ , var1 = expres1, var2 = expres2 }` just as a user would
 create a record of `{, var1 = VarType, var2 = Var2Type }`.
 
+## Some Syntax Snippets I'm working on.
+
+### Comments
+
+Turns out `-doc` has some collisions with actual syntax I want to use. Like if
+someone has some variable `doc` and wants to subtract it from something else,
+oops! You've commented out the rest of the line of code. Gotcha's suck. I also
+don't want to have 2 seperate ways to do a comment. Since I want comments to be
+placed in any position and be used as documentation, that kinda nixes the 'until
+end of line' style.
+
+I don't really have enough enclosure symbols to go around, so here's what we're
+doing:
+
+* Comments are enclosed in `{-` and `-}`.
+* Comments, like all other enclosed things, are nested. So doing `{- outer {- inner -} outer 2 -}`
+is valid, but `{- outer {- inner -}` will have a never ending comment.
+
+### Collections.
+
+#### Map / Dict
+
+```milang
+-type Map key value when { key = Eq }.
+
+empty_map : Map k v.
+empty_map ->
+	{= =}.
+
+singleton : key -> value -> Map key value.
+singleton key value ->
+	{= , key = value =}.
+
+multi_init : Map Int String.
+multi_init ->
+	{=
+	, 1 = "1"
+	,  2 = "2"
+	,  3 = "3"
+	=}.
+
+set : key -> value -> Map key value -> Map key value.
+set key value map ->
+	{= map | , key = value =}.
+
+set2 : key -> value -> key -> value -> Map key value -> Map key value.
+set2 k1 v1 k2 v2 map ->
+	{= map | , k1 = v1, k2 = v2 =}
+
+match_key : key -> Map key value -> Maybe value.
+match_key key map ->
+	match map when {
+		, {= , key = value =} ->
+			Just value
+		, _ ->
+			Nothing
+	}.
+
+access_key : key -> Map key value -> Maybe value.
+access_key key map ->
+	{= key =} map.
+
+delete_key : key -> Map key value -> Map key value.
+delete_key key map ->
+	{= map | , key =}.
+
+delete_and_set : key -> key -> value -> Map key value -> Map key value.
+delete_and_set delkey setkey value map ->
+	{= map | , delkey , setkey = value =}.
+
+```
+
+#### Lists
+
+```milang
+
+-type List e.
+
+empty_list : List a.
+empty_list ->
+	[].
+
+singleton : a -> List a.
+singleton a ->
+	[ , a ].
+
+maybe_head : List a -> Maybe a.
+maybe_head list ->
+	match list when {
+		, [] -> Nothing
+		, [ a | _] -> Just a
+	}.
+
+prepend : a -> List a -> List a.
+prepend a list ->
+	[a | list].
+
+tail : List a -> List a.
+tail list ->
+	match list when {
+		, [] -> []
+		, [_ | tail] -> tail
+	}.
+```
+
+#### Records
+
+Records fill in for arrays and tuples. Granted, the keys for records are never
+integers, but allowing things just as 'first' and 'second' can help here.
+
+What's more, records (unlike lists and maps) do not have a generic type that
+can be specified. In essence, the functions and datatype are generated at compile
+time.
+
+```milang
+
+{- Specifying a record type. -}
+
+-alias Steak = { , cut = Cut , temp = Temperature }.
+
+get_cut : Steak -> Cut.
+get_cut steak ->
+	{ cut } steak.
+
+set_cut : Cut -> Steak -> Steak.
+set_cut cut steak ->
+	{steak | , cut = Cut }.
+
+set_cut_and_temp : Cut -> Temp -> Steak -> Steak.
+set_cut_and_temp cut temp steak ->
+	{steak | , cut = cut, temp = temp }.
+
+new_steak : Cut -> Temp -> Steak.
+new_steak cut -> temp ->
+	{ , cut = cut, temp = temp }.
+
+match_cut_with : Cut -> Steak -> Boolean.
+match_cut_with cut steak ->
+	match steak when {
+		, { , cut = cut } ->
+			True
+		, _ ->
+			False
+	}.
+
+steak_constructor : (Cut -> Temperature -> Steak).
+steak_constructor ->
+	Steak.
+
+extend_steak : Steak -> { , cut = Cut, temp = Temperature, overdone = Boolean}.
+extend_steak steak ->
+	match steak when {
+		, {, temp = High } ->
+			{steak | , overdone = True }
+		, _ ->
+			{steak | , overdone = False }
+	}.
+```
+
 ## Erlang runtime
 
 Because I'm lazy.

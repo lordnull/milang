@@ -253,6 +253,8 @@ do_load_binding(Binding, Table) ->
 -spec check_type_match(concrete(), concrete() | placeholder, lookup_table()) -> {ok, lookup_table()} | {error, term()}.
 check_type_match(_Known, placeholder, Table) ->
 	{ok, Table};
+check_type_match(placeholder, _Known, Table) ->
+	{ok, Table};
 check_type_match(#concrete{ concrete_of = OfA} = Known, #concrete{ concrete_of = OfB} = Inferred, Table)
 		when OfA =:= OfB; OfA =:= undefined; OfB =:= undefined ->
 	KnownArgs = Known#concrete.args,
@@ -340,7 +342,14 @@ type_of_node(#milang_ast{ type = type_data } = Node, Table) ->
 	ResultArgTypes = 'Result':map_list(fun(N) ->
 		type_of_node(N, Table)
 	end, Args),
-	'Result':map(fun(ArgTypes) -> #concrete{ concrete_of = NameAST#milang_ast.data, args = ArgTypes } end, ResultArgTypes);
+	LookupName = case NameAST#milang_ast.data of
+		A when is_atom(A) -> {local, A};
+		D -> D
+	end,
+	ResultLookupName = resolve_name(LookupName, Table),
+	'Result':and_then_n([ResultArgTypes, ResultLookupName], fun(ArgTypes, ResolvedName) ->
+		{ok, #concrete{ concrete_of = ResolvedName, args = ArgTypes }}
+	end);
 type_of_node(#milang_ast{ type = type_name_remote} = Node, _Table) ->
 	% if we're here, we're not just looking at some binding, we're trying
 	% to figure out types. Which means this name _is_ defining a type, and
@@ -441,11 +450,14 @@ resolve_type(Name, Table) ->
 
 -spec resolve_name(name(), lookup_table()) -> {ok, name()} | {error, notfound}.
 resolve_name(Name, Table) ->
+	io:format("looking for ~p, ", [Name]),
 	case lookup(Name, Table) of
 		{ok, #alias{} = A} ->
 			resolve_name(A#alias.truename, Table);
 		{ok, _NotAlias} ->
+			io:format("and found!~n"),
 			{ok, Name};
 		Error ->
+			io:format("Did not find."),
 			Error
 	end.
