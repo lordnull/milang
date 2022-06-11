@@ -73,13 +73,27 @@ record(KeyParser, ValueParser) ->
 	end,
 	parse:set_tag(generic_record, parse:map(SeriesP, Mapper)).
 
+exclude_keywords(Parser) ->
+	AndThen = fun(V) ->
+		Keywords = [<<"match">>, <<"when">>],
+		case lists:member(V, Keywords) of
+			true ->
+				parse:fail({keyword_disallowed, V});
+			false ->
+				parse:success(V)
+		end
+	end,
+	parse:andThen(Parser, AndThen).
+
 downcase_name() ->
-	RegEx = parse:regex("\\p{Ll}\\w*", first),
-	parse:map(RegEx, fun([V]) -> V end).
+	RegEx = parse:regex("\\p{Ll}[\\w\\d]*", first),
+	Mapped = parse:map(RegEx, fun([V]) -> V end),
+	exclude_keywords(Mapped).
 
 upcase_name() ->
-	RegEx = parse:regex("\\p{Lu}\\w*", first),
-	parse:map(RegEx, fun([V]) -> V end).
+	RegEx = parse:regex("\\p{Lu}[\\w\\d]*", first),
+	Mapped = parse:map(RegEx, fun([V]) -> V end),
+	exclude_keywords(Mapped).
 
 space() ->
 	parse:first_of([whitespace(), comment()]).
@@ -108,7 +122,7 @@ comment() ->
 	Repeat = parse:repeat_until(MaybeNested, Ending),
 	Series = parse:series([parse:string(<<"{-">>), Repeat]),
 	Mapper = fun([_, {Doc, _}]) ->
-		Doc
+		unicode:characters_to_binary(Doc)
 	end,
 	parse:map(Series, Mapper).
 
@@ -149,9 +163,13 @@ type_name_local() ->
 %	parse:set_tag(module_name_prefix, parse:map(Repeat, Mapper)).
 
 variable() ->
-	RegEx = parse:regex("[\\p{Ll}_]\\w*", first),
-	Tagged = parse:tag(variable, RegEx),
-	Mapper = fun({T, L, [V]}) ->
+	RegEx = parse:regex("[\\p{Ll}_][\\w\\d]*", first),
+	JustOneV = parse:map(RegEx, fun([V]) ->
+		V
+	end),
+	PassVariable = exclude_keywords(JustOneV),
+	Tagged = parse:tag(variable, PassVariable),
+	Mapper = fun({T, L, V}) ->
 		milang_ast:ast_node(L, <<>>, T, binary_to_atom(V))
 	end,
 	parse:set_tag(variable, parse:map(Tagged, Mapper)).
@@ -179,7 +197,7 @@ infix_notation() ->
 	parse:set_tag(infix_notation, parse:map(Tagged, Mapper)).
 
 infix_symbol() ->
-	DisallowedSet = ordsets:from_list("'\"[]{}(),"),
+	DisallowedSet = ordsets:from_list("'\"[]{}(),«»:"),
 	AllowedRegexTest = "[\\pS\\pP]+",
 	{ok, Compiled} = re:compile(AllowedRegexTest, [unicode, ucp]),
 	ChompTest = fun(C) ->

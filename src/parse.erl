@@ -174,11 +174,21 @@ update_location(Binary, OldRow, OldCol) ->
 	{ok, SplitRe} = re:compile(<<"\\R">>, [bsr_unicode]),
 	case re:split(Binary, SplitRe, [{return, binary}]) of
 		[Binary] ->
-			{OldRow, OldCol + size(Binary)};
+			AddTo = count_characters(Binary),
+			{OldRow, OldCol + AddTo};
 		Parts ->
 			[LastPart | Rows] = lists:reverse(Parts),
-			{OldRow + length(Rows), size(LastPart)}
+			AddTo = count_characters(LastPart),
+			{OldRow + length(Rows), 1 + AddTo}
 	end.
+
+count_characters(Binary) ->
+	count_characters(Binary, 0).
+
+count_characters(<<>>, Acc) ->
+	Acc;
+count_characters(<<_/utf8, Rest/binary>>, Acc) ->
+	count_characters(Rest, Acc + 1).
 
 -spec set_tag(term(), parser(Err, Ok)) -> parser(Err, Ok).
 set_tag(Tag, Parser) ->

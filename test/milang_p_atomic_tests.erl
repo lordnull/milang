@@ -5,9 +5,9 @@
 
 atomics_test_() ->
 	[ ?_assertMatch(<<>>, string:trim(iolist_to_binary(element(2, milang_p_atomic:parse(<<" \n \r\n  \r\n">>)))))
-	, ?_assertMatch({ok, <<"yup">>, <<>>}, milang_p_atomic:parse(<<"-doc yup">>))
-	, ?_assertMatch({ok, <<"yup yup">>, <<"\n">>}, milang_p_atomic:parse(<<"-doc yup yup\n">>))
-	, ?_assertMatch({ok, ok, <<>>}, parse:it(<<"-doc yup\n-doc yup\n-doc yup">>, milang_p_atomic:space_then(parse:end_of_input())))
+	, ?_assertMatch({ok, <<"yup">>, <<>>}, milang_p_atomic:parse(<<"{-yup-}">>))
+	, ?_assertMatch({ok, <<"yup yup">>, <<"\n">>}, milang_p_atomic:parse(<<"{-yup yup-}\n">>))
+	, ?_assertMatch({ok, ok, <<>>}, parse:it(<<"{-yup\nyup\nyup-}">>, milang_p_atomic:space_then(parse:end_of_input())))
 	, ?_assertMatch({ok, #milang_ast{type = type_name_local, data = 'Goober'}, <<>>}, milang_p_atomic:parse(<<"Goober">>))
 	, ?_assertMatch({ok, #milang_ast{type = type_name_remote, data = #{module := 'Eating.Goober', name := 'Peas3'}}, <<>>}, milang_p_atomic:parse(<<"Eating.Goober.Peas3">>))
 	, ?_assertMatch({ok, #milang_ast{type = function_name_local, data = 'okay_okay'}, <<>>}, milang_p_atomic:parse(<<"okay_okay">>))

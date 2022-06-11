@@ -16,6 +16,7 @@ groups() ->
 		, type_error_test
 		, header_creation_test
 		, comment_test
+		, map_syntax_test
 		]}
 	].
 
@@ -138,5 +139,16 @@ comment_test(Cfg) ->
 	OutputFile = filename:join([PrivDir, "CommentTest"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
 	ok = milang_compile:compile(AST, [{input_file_name, "CommentTest.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
+	Result = os:cmd(OutputFile),
+	?assertEqual("", Result).
+
+map_syntax_test(Cfg) ->
+	DataDir = proplists:get_value(data_dir, Cfg),
+	PrivDir = proplists:get_value(priv_dir, Cfg),
+	{ok, AST} = milang_parse:file(filename:join([DataDir, "MapTest.milang"])),
+
+	OutputFile = filename:join([PrivDir, "MapTest"]),
+	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
+	ok = milang_compile:compile(AST, [{input_file_name, "MapTest.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
 	Result = os:cmd(OutputFile),
 	?assertEqual("", Result).

@@ -15,6 +15,7 @@
 	[ args_list/0
 	, space_opt/1
 	, space/1
+	, function_bindings/0
 	]).
 
 -spec space_opt(parser:parser(Err, Ok)) -> parse:parser(Err, Ok).
@@ -220,7 +221,7 @@ declaration_function() ->
 		Data = #{ name => Name, args => Args, bindings => Bindings, expression => Expression },
 		milang_ast:ast_node(L, <<>>, T, Data)
 	end,
-	parse:map(Tagged, Mapper).
+	parse:set_tag(declaration_function, parse:map(Tagged, Mapper)).
 
 function_bindings() ->
 	SeriesP = parse:series([space_opt(milang_p_atomic:variable()), space_opt(parse:character($=)), space_opt(parse:lazy(fun milang_p_expression:expression/0)), space_opt(parse:character($,))]),
@@ -229,12 +230,12 @@ function_bindings() ->
 		milang_ast:ast_node(L, <<>>, T, #{ name => Variable, expression => Expression})
 	end,
 	Binding = parse:map(BindingTagged, BindingMapper),
-	WhenCheck = parse:map(parse:series([space_opt(milang_p_atomic:variable()), space_opt(parse:character($=))]), fun(_) -> ok end),
+	WhenCheck = parse:test(parse:map(parse:series([space_opt(milang_p_atomic:variable()), space_opt(parse:character($=))]), fun(_) -> ok end)),
 	RepeatedHasOks = parse:repeat_when(Binding, WhenCheck),
 	Repeated = parse:map(RepeatedHasOks, fun(L) ->
 		[ E || E <- L, L =/= ok]
 	end),
-	parse:optional(Repeated).
+	parse:set_tag(function_bindings, parse:optional(Repeated)).
 
 
 declaration_spec() ->
@@ -265,4 +266,4 @@ args_list() ->
 	Mapped = parse:map(Repeated, fun(L) ->
 		[E || E <- L, E =/= ok]
 	end),
-	parse:optional(Mapped).
+	parse:set_tag(args_list, parse:optional(Mapped)).

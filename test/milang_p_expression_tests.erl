@@ -5,7 +5,7 @@
 
 expression_test_() ->
 	[ ?_assertMatch({ok, #milang_ast{type = literal_list, data = []}, <<>>}, milang_p_expression:parse(<<"[    ]">>))
-	, ?_assertMatch({ok, #milang_ast{type = literal_map, data = []}, <<>>}, milang_p_expression:parse(<<"#{}#">>))
+	, ?_assertMatch({ok, #milang_ast{type = literal_map, data = []}, <<>>}, milang_p_expression:parse(<<"{==}">>))
 	, ?_assertMatch({ok, #milang_ast{type = literal_float, data = 5.7}, <<>>}, milang_p_expression:parse(<<"5.7">>))
 	, ?_assertMatch({ok, #milang_ast{type = literal_integer, data = 83}, <<>>}, milang_p_expression:parse(<<"83">>))
 	, ?_assertMatch({ok, #milang_ast{type = literal_string, data = <<"hello!">>}, <<>>}, milang_p_expression:parse(<<"\"hello!\"">>))
@@ -16,8 +16,8 @@ expression_test_() ->
 		{ok, #milang_ast{data = Elements}, <<>>} = Parsed,
 		?assertMatch([#milang_ast{type = literal_integer, data = 5}, #milang_ast{type = literal_integer, data = 6}], Elements)
 	end
-	, ?_assertMatch({ok, #milang_ast{type = literal_map, data = [#milang_ast{type = literal_map_entry, data = #{ key := #milang_ast{type = literal_integer, data = 3}, value := #milang_ast{type = literal_float, data = 345.899}}}]}, <<>>}, milang_p_expression:parse(<<"#{, 3 = 345.899 }#">>))
-	, ?_assertMatch({ok, #milang_ast{type = literal_map, data = [#milang_ast{type = literal_map_entry, data = #{ key := #milang_ast{type = literal_integer, data = 3}, value := #milang_ast{type = literal_float, data = 345.899}}}]}, <<>>}, milang_p_expression:parse(<<"#{, 3 = 345.899}#">>))
+	, ?_assertMatch({ok, #milang_ast{type = literal_map, data = [#milang_ast{type = map_set, data = #{ key := #milang_ast{type = literal_integer, data = 3}, value := #milang_ast{type = literal_float, data = 345.899}}}]}, <<>>}, milang_p_expression:parse(<<"{=, 3 = 345.899 =}">>))
+	, ?_assertMatch({ok, #milang_ast{type = literal_map, data = [#milang_ast{type = map_set, data = #{ key := #milang_ast{type = literal_integer, data = 3}, value := #milang_ast{type = literal_float, data = 345.899}}}]}, <<>>}, milang_p_expression:parse(<<"{=, 3 = 345.899=}">>))
 	, ?_assertMatch({ok, #milang_ast{type = literal_record, data = [#milang_ast{type = literal_record_field, data = {f1, #milang_ast{type = literal_integer, data = 5}}}]}, <<>>}, milang_p_expression:parse(<<"{, f1 = 5}">>))
 	, fun() ->
 		Parsed = milang_p_expression:parse(<<"{, f1 = a b (c d),flart=\"hi\" }">>),
@@ -97,5 +97,27 @@ expression_test_() ->
 		?assertMatch(#milang_ast{type = expression_call}, Elem1),
 		?assertMatch(#milang_ast{type = literal_list, data = [_, _, _]}, Elem2),
 		?assertMatch(#milang_ast{type = literal_record, data = [_, _]}, Elem3)
+	end
+	, ?_assertMatch({ok, #milang_ast{ type = literal_map }, <<>>}, parse:it(<<"{= , key = value =}">>, milang_p_expression:literal()))
+	, ?_assertMatch({ok, #milang_ast{ type = map_update }, <<>>}, parse:it(<<"{= map : , key = value =}">>, milang_p_expression:literal()))
+	, ?_assertMatch({ok, #milang_ast{ type = map_update }, <<>>}, parse:it(<<"{= map : , key , key2 = value =}">>, milang_p_expression:literal()))
+	, ?_assertMatch({ok, #milang_ast{ type = map_key_access }, <<>>}, parse:it(<<"{= key =} map">>, milang_p_expression:literal()))
+	, ?_assertMatch({ok, #milang_ast{ type = expression_match }, <<>>}, parse:it(<<"match a when { , 5 -> \"five\" , _ -> \"not five\" }">>, milang_p_expression:match()))
+	, fun() ->
+		Code = <<"match ( 1 + 2) when { , 7 -> \"seven\" , 3 -> \"threeve\", _ -> \"some super weird number\" }">>,
+		TopParse = parse:it(Code, milang_p_expression:match()),
+		?assertMatch({ok, #milang_ast{ type = expression_match}, <<>>}, TopParse),
+		{ok, #milang_ast{ data = MatchData}, <<>>} = TopParse,
+		?assertMatch(#milang_ast{ type = expression }, maps:get(expression, MatchData)),
+		?assertMatch([_, _, _], maps:get(tests, MatchData)),
+		ok = lists:foreach(fun(E) ->
+			?assertMatch(#milang_ast{type = match_test}, E)
+		end, maps:get(tests, MatchData)),
+		[Test1Data, Test2Data, Test3Data] = lists:map(fun(E) ->
+			E#milang_ast.data
+		end, maps:get(tests, MatchData)),
+		?assertMatch(#{ test := #milang_ast{ type = literal_integer}, expression := #milang_ast{ type = literal_string }}, Test1Data),
+		?assertMatch(#{ test := #milang_ast{ type = literal_integer}, expression := #milang_ast{ type = literal_string }}, Test2Data),
+		?assertMatch(#{ test := #milang_ast{ type = variable}, expression := #milang_ast{ type = literal_string }}, Test3Data)
 	end
 	].
