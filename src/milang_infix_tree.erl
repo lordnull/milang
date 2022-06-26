@@ -66,22 +66,29 @@
 -module(milang_infix_tree).
 
 -include("milang_ast.hrl").
+-include("milang_log.hrl").
 
 -export([from_ast/1]).
 
--spec from_ast(milang_ast:ast_node()) -> {ok, milang_ast:ast_node()} | {error, term()}.
-from_ast(#milang_ast{ type = expression } = Node) ->
-	io:format("Start of expression handling: ~p~n", [Node]),
+-spec from_ast(milang_ast:ast_node(A)) -> {ok, milang_ast:ast_node(A)} | {error, term()}.
+from_ast(#milang_ast{ data = #expression_infix{ infix_ops = [] } = Data}) ->
+	milang_log:it(debug, ?log_info, "An expression infix with no ops is just the head"),
+	Node = Data#expression_infix.head,
+	{ok, Node};
+from_ast(#milang_ast{ data = #expression_infix{} } = Node) ->
+	milang_log:it(debug, ?log_info, "Start of expression handling: ~p", [Node]),
 	Data = Node#milang_ast.data,
-	#{ infix_ops := InfixOps } = Data,
-	io:format("Infix ops: ~p~n", [InfixOps]),
-	Head = maps:get(head, Data),
-	io:format("The head: ~p~n", [Head]),
+	#expression_infix{ head = Head, infix_ops = InfixOps } = Data,
+	milang_log:it(debug, ?log_info, "Infix ops: ~p", [InfixOps]),
+	milang_log:it(debug, ?log_info, "The head: ~p", [Head]),
 	MaybePriorToAssoc = weight_to_assoc(InfixOps),
-	io:format("wieghts and assoc: ~p~n", [MaybePriorToAssoc]),
-	MaybeTree = maybe_to_tree({Head, InfixOps}, MaybePriorToAssoc),
-	io:format("Dah tree: ~p~n", [MaybeTree]),
-	maybe_tree_to_ast(MaybeTree);
+	milang_log:it(debug, ?log_info, "wieghts and assoc: ~p", [MaybePriorToAssoc]),
+	MaybeTree = 'Result':map(fun(WeightToAssocMap) ->
+		WeightToAssoc = lists:sort(maps:to_list(WeightToAssocMap)),
+		to_tree(Node, WeightToAssoc)
+	end, MaybePriorToAssoc),
+	milang_log:it(debug, ?log_info, "Dah tree: ~p", [MaybeTree]),
+	'Result':map(fun tree_to_ast/1, MaybeTree);
 from_ast(Node) ->
 	{ok, Node}.
 
@@ -90,7 +97,7 @@ weight_to_assoc(Ops) ->
 
 weight_to_assoc([], Map) ->
 	{ok, Map};
-weight_to_assoc([ {Op, _} | Tail], Map) ->
+weight_to_assoc([ Op | Tail], Map) ->
 	{Weight, Assoc} = weight_and_assoc(Op),
 	case maps:find(Weight, Map) of
 		error ->
@@ -111,16 +118,11 @@ weight_to_assoc([ {Op, _} | Tail], Map) ->
 	assoc = left :: 'left' | 'right',
 	left :: #milang_ast{} | #op_rec{},
 	right :: #milang_ast{} | #op_rec{},
-	op = '' :: atom() | #milang_ast{}
+	op = '' :: milang_ast:name()
 }).
 
-maybe_tree_to_ast({error, _} = Error) ->
-	Error;
-maybe_tree_to_ast({ok, Tree}) ->
-	{ok, tree_to_ast(Tree)}.
-
 tree_to_ast(Op) ->
-	io:format("op tree to ast: ~p", [Op]),
+	milang_log:it(debug, ?log_info, "op tree to ast: ~p", [Op]),
 	NewLeft = case Op#op_rec.left of
 		#op_rec{} = Left ->
 			tree_to_ast(Left);
@@ -133,86 +135,87 @@ tree_to_ast(Op) ->
 		_ ->
 			Op#op_rec.right
 	end,
-	FunctionName = case Op#op_rec.op of
-		A when is_atom(A) ->
-			milang_ast:ast_node({1,1}, <<>>, function_name_local, A);
-		NotAtom ->
-			NotAtom
-	end,
-	CallData = #{ name => FunctionName, args => [NewLeft, NewRight] },
-	milang_ast:ast_node({1,1}, <<>>, expression_call, CallData).
+	FunctionName = Op#op_rec.op,
+	CallData = #expression_call{ function = FunctionName, args = [NewLeft, NewRight] },
+	milang_ast:ast_node({1,1}, <<>>, CallData).
 
-maybe_to_tree(_OpList, {error, _} = Error) ->
-	Error;
-maybe_to_tree(OpList, {ok, Map}) ->
-	Weights = lists:sort(maps:to_list(Map)),
-	{ok, to_tree(OpList, Weights)}.
-
-to_tree({Head, []}, _WeightNoMatter) ->
-	io:format("Dah head!~n"),
-	Head;
-to_tree(Ops, [{Weight, right} | WeightTail] = AllWeight) ->
-	{Head, ReversedOps} = reverse_oplist(Ops),
+to_tree(#milang_ast{ data = #expression_infix{ infix_ops = [] } } = Node, _WeightNoMatter) ->
+	milang_log:it(debug, ?log_info, "Dah head!", []),
+	Node#milang_ast.data#expression_infix.head;
+to_tree(Node, [{Weight, right} | WeightTail] = AllWeight) ->
+	ReversedNode = reverse_oplist(Node),
+	ReversedOps = ReversedNode#milang_ast.data#expression_infix.infix_ops,
 	SplitFun = split_fun(Weight),
 	case lists:splitwith(SplitFun, ReversedOps) of
 		{ReversedOps, []} ->
-			to_tree(Ops, WeightTail);
-		{RightOps, [{Op, NextHead} | OpTail]} ->
-			RawRightReversed = {Head, RightOps},
-			RawRight = reverse_oplist(RawRightReversed),
+			to_tree(Node, WeightTail);
+		{RightOps, [OpWithNextHead | OpTail]} ->
+			OriginalHead = Node#milang_ast.data#expression_infix.head,
+			RawRightReversedData = #expression_infix{ head = OriginalHead, infix_ops = RightOps },
+			RawRight = reverse_oplist(Node#milang_ast{ data = RawRightReversedData}),
 			Right = to_tree(RawRight, WeightTail),
-			RawLeft = reverse_oplist({NextHead, OpTail}),
+			NextHead = OpWithNextHead#infix_operation.expression,
+			Op = OpWithNextHead#infix_operation.operator,
+			RawLeftReversedData = #expression_infix{ head = NextHead, infix_ops = OpTail },
+			RawLeftReversed = Node#milang_ast{ data = RawLeftReversedData },
+			RawLeft = reverse_oplist(RawLeftReversed),
 			Left = to_tree(RawLeft, AllWeight),
 			op_rec(Left, Op, Right)
 	end;
-to_tree({Head, Ops}, [{Weight, _LeftOrEither} | WeightTail] = AllWeight) ->
+to_tree(Node, [{Weight, _LeftOrEither} | WeightTail] = AllWeight) ->
 	SplitFun = split_fun(Weight),
+	Ops = Node#milang_ast.data#expression_infix.infix_ops,
 	case lists:splitwith(SplitFun, Ops) of
 		{Ops, []} ->
-			to_tree({Head, Ops}, WeightTail);
-		{LeftOps, [{Op, NextHead} | OpTail]} ->
-			RawLeft = {Head, LeftOps},
-			Left = to_tree(RawLeft, WeightTail),
-			Right = to_tree({NextHead, OpTail}, AllWeight),
+			to_tree(Node, WeightTail);
+		{LeftOps, [OpNodeWithNextHead | OpTail]} ->
+			Op = OpNodeWithNextHead#milang_ast.data#infix_operation.operator,
+			NextHead = OpNodeWithNextHead#milang_ast.data#infix_operation.expression,
+			OriginalHead = Node#milang_ast.data#expression_infix.head,
+			OriginalData = Node#milang_ast.data,
+			RawLeft = OriginalData#expression_infix{ head = OriginalHead, infix_ops = LeftOps},
+			Left = to_tree(Node#milang_ast{ data = RawLeft }, WeightTail),
+			RawRight = OriginalData#expression_infix{ head = NextHead, infix_ops = OpTail },
+			Right = to_tree( Node#milang_ast{ data = RawRight }, AllWeight ),
 			op_rec(Left, Op, Right)
 	end;
 to_tree(Node, []) ->
-	io:format("dah node: ~p~n", [Node]),
+	milang_log:it(debug, ?log_info, "dah node: ~p", [Node]),
 	Node.
 
+reverse_oplist(#milang_ast{data = #expression_infix{} = Expression} = Node) ->
+	#expression_infix{ head = Head, infix_ops = Oplist} = Expression,
+	{NewHead, NewList} = reverse_oplist(Head, Oplist),
+	NewData = Expression#expression_infix{ head = NewHead, infix_ops = NewList },
+	Node#milang_ast{ data = NewData }.
 
-
-reverse_oplist({Head, Oplist}) ->
+reverse_oplist(Head, Oplist) ->
 	reverse_oplist(Head, Oplist, []).
 
-reverse_oplist(Left, [{Op, Right}], Acc) ->
-	{Right, [{Op, Left} | Acc]};
-reverse_oplist(Left, [{Op, Right} | Tail], Acc) ->
-	reverse_oplist(Right, Tail, [{Op, Left} | Acc]).
+reverse_oplist(Left, [OpNode], Acc) ->
+	#milang_ast{ data = OpData } = OpNode#milang_ast.data,
+	#infix_operation{ expression = Right } = OpData,
+	ReversedOp = OpData#infix_operation{ expression = Left },
+	{Right, [ReversedOp | Acc]};
+reverse_oplist(Left, [OpNode | Tail], Acc) ->
+	#milang_ast{ data = OpData } = OpNode#milang_ast.data,
+	#infix_operation{ expression = Right } = OpData,
+	NewOpData = OpData#infix_operation{ expression = Left },
+	NewOp = OpNode#milang_ast{ data = NewOpData },
+	reverse_oplist(Right, Tail, [ NewOp | Acc]).
 
 split_fun(Weight) ->
-	fun({E, _}) ->
-		io:format("ye old e: ~p~n", [E]),
-		Data = E#milang_ast.data,
-		case Data of
-			#{weight := N} ->
-				N =/= Weight;
-			_ when is_atom(Data) ->
-				Weight =/= 1
-		end
-
+	fun(E) ->
+		milang_log:it(debug, ?log_info, "ye old e: ~p", [E]),
+		N = E#milang_ast.data#infix_operation.operator#milang_ast.data#infix_notation.weight,
+		N =/= Weight
 	end.
 
 
-
-
+-spec op_rec(milang_ast:expression(), milang_ast:infix_notation(), milang_ast:expression()) -> #op_rec{}.
 op_rec(Left, Op, Right) ->
 	{_Weight, Assoc} = weight_and_assoc(Op),
-	Data = Op#milang_ast.data,
-	FunctionName = case Data of
-		#{ function := F } -> F;
-		_ -> Data
-	end,
+	FunctionName = Op#milang_ast.data#infix_notation.name,
 	#op_rec{
 		assoc = Assoc,
 		left = Left,
@@ -223,7 +226,9 @@ op_rec(Left, Op, Right) ->
 
 weight_and_assoc(#milang_ast{ data = Data}) ->
 	weight_and_assoc(Data);
-weight_and_assoc(#{ assoc := Assoc, weight := Weight }) ->
+weight_and_assoc(#infix_operation{ operator = Op}) ->
+	weight_and_assoc(Op);
+weight_and_assoc(#infix_notation{ assoc = Assoc, weight = Weight }) ->
 	{Weight, Assoc};
 weight_and_assoc(Op) when is_atom(Op) ->
 	{1, either}.

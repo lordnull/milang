@@ -41,7 +41,8 @@
 	}).
 
 always_import_ast() ->
-	{ok, AST, <<>>} = parse:it(?DEFAULT_IMPORTS, milang_p:module()),
+	{ok, Tokens, <<>>} = parse:it(?DEFAULT_IMPORTS, milang_p_token:tokens()),
+	{ok, AST} = milang_lex:as_header(Tokens),
 	AST.
 
 -spec compile(nonempty_list(milang_ast:ast_node()), options()) -> ok.
@@ -170,8 +171,8 @@ compile(#stack_frame{ ast = _AST, output_buffer = Bytes}, [Tail | NewStack], #co
 	compile(Tail, NewStack, State);
 compile(#stack_frame{}, [Tail | NewStack], State) ->
 	compile(Tail, NewStack, State);
-compile(#milang_ast{ type = declaration_module } = Node, Stack, CompileState) ->
-	#{ name := Name, exposing := Exports} = Node#milang_ast.data,
+compile(#milang_ast{ data = #declaration_module{} } = Node, Stack, CompileState) ->
+	#declaration_module{ name = Name, exposing = Exports} = Node#milang_ast.data,
 	NewState = declaration_module(Name, Exports, CompileState),
 	ModuleName = NewState#compile_state.module_name,
 	Functions = NewState#compile_state.function_exports,
@@ -179,29 +180,31 @@ compile(#milang_ast{ type = declaration_module } = Node, Stack, CompileState) ->
 	OutputFmt = "-module('~s').~n"
 	"-export([~s]).~n"
 	"-export_type([~s]).~n~n",
-	FunctionExportsList = [io_lib:format("'~s'/0~n", [milang_ast:data(A)]) || A <- Functions],
+	FunctionExportsList = [io_lib:format("'~s'/0~n", [A]) || {_, A} <- Functions],
 	FunctionExprts = lists:join($,, FunctionExportsList),
-	TypeExportsList = [ io_lib:format("'~s'/0~n", [milang_ast:data(A)]) || A <- Types],
+	TypeExportsList = [ io_lib:format("'~s'/0~n", [A]) || {_, A} <- Types],
 	TypeExports = lists:join($,, TypeExportsList),
 	Output = io_lib:format(OutputFmt, [ModuleName, FunctionExprts, TypeExports]),
 	ok = write_to_outfile(NewState, Output),
 	DefaultImports = always_import_ast(),
 	compile(DefaultImports, Stack, NewState);
-compile(#milang_ast{ type = declaration_spec } = AST, Stack, State) ->
+compile(#milang_ast{ data = #declaration_spec{} } = AST, Stack, State) ->
 	NewState = type_checking(AST, State),
 	compile([], Stack, NewState);
-compile(#milang_ast{ type = declaration_function } = InfixAST, Stack, StatsPreTypeCheck) ->
-	#{ name := Name, args := Args, expression := MaybeInfixBody} = InfixAST#milang_ast.data,
+compile(#milang_ast{ data = #declaration_function{} } = InfixAST, Stack, StatsPreTypeCheck) ->
+	#declaration_function{ name = Name, args = Args, expression = MaybeInfixBody} = InfixAST#milang_ast.data,
 	{Body, InfixState} = case milang_infix_tree:from_ast(MaybeInfixBody) of
 		{ok, B} ->
 			{B, StatsPreTypeCheck};
 		{error, InfixTreeError} ->
 			{MaybeInfixBody, add_error(InfixAST#milang_ast.location, {invalid_expression, InfixTreeError, MaybeInfixBody}, StatsPreTypeCheck)}
 	end,
-	AST = InfixAST#milang_ast{ data = maps:put(expression, Body, InfixAST#milang_ast.data)},
+	AST = milang_ast:transform_data(fun(R) ->
+		R#declaration_function{ expression = Body}
+	end, InfixAST),
 	State = type_checking(AST, InfixState),
 	Arity = length(Args),
-	LocalName = Name#milang_ast.data,
+	{_, LocalName} = Name,
 	Exported = io_lib:format("'~s'() -> milang_curry:stack(fun ~s/~p).~n~n", [LocalName, LocalName, Arity]),
 	ok = write_to_outfile(State, Exported),
 	ok = log("ye old args: ~p", [Args]),
@@ -211,9 +214,9 @@ compile(#milang_ast{ type = declaration_function } = InfixAST, Stack, StatsPreTy
 	ok = write_to_outfile(State, FunctionHead),
 	Frame = #stack_frame{ ast = AST, output_buffer = ".\n"},
 	compile(Body, [Frame | Stack], State);
-compile(#milang_ast{ type = declaration_import } = Dec, Stack, State) ->
+compile(#milang_ast{ data = #declaration_import{} } = Dec, Stack, State) ->
 	#milang_ast{ location = Location, data = Data} = Dec,
-	#{ name := Module } = Data,
+	#declaration_import{ name = Module } = Data,
 	case find_module(Module, State#compile_state.work_dir, State#compile_state.search_dirs) of
 		{error, _} ->
 			NewState = add_error(Location, {cannot_find_module, Module}, State),
@@ -224,28 +227,18 @@ compile(#milang_ast{ type = declaration_import } = Dec, Stack, State) ->
 			compile(Dec, Stack, State);
 		{ok, HeaderFile} ->
 			Table = State#compile_state.lookup_table,
-			{ok, Header} = milang_parse:file(HeaderFile),
+			ok = log("Parsing a header: ~p", [HeaderFile]),
+			{ok, HeaderTokens} = milang_parse:file(HeaderFile),
+			{ok, Header} = milang_lex:as_header(HeaderTokens),
 			{ok, NewTable} = milang_type_validation:validate_list(Header, Table),
 			{ok, TableWithImport} = milang_type_validation:validate_list([Dec], NewTable),
 			OldSupport = State#compile_state.support_modules,
 			NewSupport = [ Module | OldSupport ],
 			compile([], Stack, State#compile_state{ lookup_table = TableWithImport, support_modules = NewSupport})
 	end;
-compile(#milang_ast{ type = expression_call } = AST, Stack, State) ->
-	#{ name := CallNameAST, args := Args} = AST#milang_ast.data,
-	{ModPart, FuncPart} = case CallNameAST of
-		#milang_ast{ type = function_name_remote, data = Data} ->
-			#{ name := Name, module := ModuleName } = Data,
-			{[$', atom_to_binary(ModuleName), $', $:], Name};
-		#milang_ast{ type = function_name_local, data = LocalName } ->
-			case milang_type_validation:resolve_name({local, LocalName}, State#compile_state.lookup_table) of
-				{ok, Resolved} ->
-					function_name_to_mf(Resolved);
-				{error, notfound} ->
-					log("Could not resolve ~s, assuming it's a local call.", [LocalName]),
-					{"", LocalName}
-			end
-	end,
+compile(#milang_ast{ data = #expression_call{} } = AST, Stack, State) ->
+	#expression_call{ function = CallName, args = Args} = AST#milang_ast.data,
+	{ModPart, FuncPart} = function_name_to_mf(CallName, State#compile_state.lookup_table),
 	CommaFrame = #stack_frame{ast = AST, output_buffer = ", "},
 	JoinedArgs = lists:join(CommaFrame, Args),
 	FinalFrame = #stack_frame{ast = AST, output_buffer = ")\n"},
@@ -253,17 +246,19 @@ compile(#milang_ast{ type = expression_call } = AST, Stack, State) ->
 	Chars = io_lib:format("~s'~s'(", [ModPart, FuncPart]),
 	ok = write_to_outfile(State, Chars),
 	compile([], NewStack, State);
-compile(#milang_ast{ type = literal_string } = Node, Stack, State) ->
-	String = Node#milang_ast.data,
+compile(#milang_ast{ data = {literal_string, String} }, Stack, State) ->
 	Chars = io_lib:format("<<\"~s\">>", [String]),
 	ok = write_to_outfile(State, Chars),
 	compile([], Stack, State);
-compile(#milang_ast{ type = literal_integer } = Node, Stack, State) ->
-	Int = Node#milang_ast.data,
+compile(#milang_ast{ data = {literal_integer, Int} }, Stack, State) ->
 	Chars = integer_to_binary(Int),
 	ok = write_to_outfile(State, Chars),
 	compile([], Stack, State);
-compile(#milang_ast{ type = expression } = Node, Stack, State) ->
+compile(#milang_ast{ data = {literal_float, Float}}, Stack, State) ->
+	Chars = float_to_binary(Float),
+	ok = write_to_outfile(State, Chars),
+	compile([], Stack, State);
+compile(#milang_ast{ data = #expression_infix{} } = Node, Stack, State) ->
 	Location = Node#milang_ast.location,
 	case milang_infix_tree:from_ast(Node) of
 		{ok, FixedAst} ->
@@ -272,15 +267,6 @@ compile(#milang_ast{ type = expression } = Node, Stack, State) ->
 			NewState = add_error(Location, {invalid_expression, Error}, State),
 			compile([], Stack, NewState)
 	end;
-
-
-%compile({call, _, _, _} = AST, Stack, State) ->
-%	NewState = compile_call(AST, State),
-%	compile([], Stack, NewState);
-%compile({function_name_local, _, _}, Stack, State) ->
-%	compile([], Stack, State);
-%compile({function_name_remote, _, _, _}, Stack, State) ->
-%	compile([], Stack, State);
 compile(Wut, Stack, CompileState) ->
 	error({nyi, Wut, Stack, CompileState}).
 
@@ -292,45 +278,18 @@ type_checking(AST, State) ->
 			add_error(AST#milang_ast.location, {type_error, T}, State)
 	end.
 
-%add_alias(Name, TruePath, State) ->
-%	add_to_lookup_table(Name, {alias, TruePath, Name}, State).
-
-% TODO start putting out a function call.
-%compile_call(Call, State) ->
-%	compile_call(Call, [], State).
-%
-%compile_call([], [], State) ->
-%	State;
-%compile_call([], [AST | Tail], State) ->
-%	compile(AST, Tail, State);
-%compile_call([AST | Tail], Stack, State) ->
-%	compile_call(AST, [Tail | Stack], State);
-%compile_call({call, _Location, Call, Args}, Stack, State) ->
-%	compile_call(Args, [Call | Stack], State);
-%compile_call({literal_string, _, _String}, Stack, State) ->
-%	compile_call([], Stack, State);
-%compile_call({function_name_local, _, _}, Stack, State) ->
-%	compile_call([], Stack, State);
-%compile_call(Wut, _Stack, State) ->
-%	error({call_wut, Wut, State}).
-
 write_to_outfile(#compile_state{ output_file_handle = undefined}, _) -> ok;
 write_to_outfile(#compile_state{ output_file_handle = Fd}, Chars) ->
 	io:put_chars(Fd, Chars).
 
-milang_arg_to_erlang_arg(AST) when is_tuple(AST) ->
-	case milang_ast:type(AST) of
-		variable ->
-			milang_arg_to_erlang_arg(milang_ast:data(AST));
-		_ ->
-			error({nyi, argument_type, AST})
-	end;
-milang_arg_to_erlang_arg(Atom) when is_atom(Atom) ->
-	milang_arg_to_erlang_arg(atom_to_binary(Atom));
-milang_arg_to_erlang_arg(<<$_, _/binary>> = Arg) ->
-	Arg;
-milang_arg_to_erlang_arg(Arg) ->
-	[$A, Arg].
+milang_arg_to_erlang_arg({name_underscore, _}) ->
+	$_;
+milang_arg_to_erlang_arg({name_downcase, Name}) when is_atom(Name) ->
+	[$A, atom_to_binary(Name) ];
+milang_arg_to_erlang_arg(#milang_ast{ data = #function_variable{ name = Name}}) ->
+	milang_arg_to_erlang_arg(Name);
+milang_arg_to_erlang_arg(Name) ->
+	error({nyi, argument_type, Name}).
 
 
 add_error(Location, Error, State) ->
@@ -354,11 +313,8 @@ declaration_module(Name, Exports, State) ->
 		_ ->
 			[{{0,0}, {module_name_file_name_mismatch}} | State#compile_state.errors]
 	end,
-	PartitionFun = fun(Node) ->
-		case milang_ast:type(Node) of
-			function_name_local -> true;
-			type_name_local -> false
-		end
+	PartitionFun = fun({NameType, _}) ->
+		NameType =/= name_upcase
 	end,
 	{Functions, Types} = lists:partition(PartitionFun, Exports),
 	State#compile_state{ module_name = Name, function_exports = Functions, type_exports = Types, errors = NewErrors}.
@@ -432,15 +388,20 @@ path_find(SearchDirs, File) ->
 			Error
 	end.
 
-function_name_to_mf(#{ module := Module, name := Function}) ->
-	{[$', atom_to_binary(Module, utf8), $', $:], Function};
-function_name_to_mf({local, Name}) ->
-	BinStr = atom_to_binary(Name, utf8),
-	case binary:split(BinStr, <<$.>>, [global]) of
-		[FunctionPart] ->
-			{"", FunctionPart};
-		Split ->
-			[FunctionPart | ReversedModule] = lists:reverse(Split),
-			ModulePart = lists:join($., lists:reverse(ReversedModule)),
-			{[$', ModulePart, $', $:], FunctionPart}
+function_name_to_mf({name_downcase, Name}, Table) ->
+	function_name_to_mf(Name, Table);
+function_name_to_mf({name_symbol, Name}, Table) ->
+	function_name_to_mf(Name, Table);
+function_name_to_mf(#{ module := ModuleName, local := Local}, _Table) ->
+	{[$', atom_to_binary(ModuleName, utf8), $', $:], Local};
+function_name_to_mf(Name, Table) when is_atom(Name) ->
+	case milang_type_validation:resolve_name(Name, Table) of
+		{ok, Name} ->
+			% must be local
+			{[], Name};
+		{ok, NewName} ->
+			function_name_to_mf(NewName, Table);
+		{error, notfound} ->
+			% assuming it's local.
+			{[], Name}
 	end.

@@ -17,20 +17,23 @@
 -module(milang_header).
 
 -include("milang_ast.hrl").
+-include("milang_log.hrl").
 
 -export([create_header/2]).
 
 
 %% @doc The ast must already have passed type checking and linter, otherwise
-%% this will likley make a bad header. Also we make no check that the module name
-%% in the as will match whatever we're writing to (file or otherwise).
+%% this will likely make a bad header. Also we make no check that the module name
+%% in the ast will match whatever we're writing to (file or otherwise).
 %%
 %% A header file is "valid" milang syntax. Valid in that it's got type and
 %% function names where we expect them, but any aliases or local names become
 %% fully qualified. This allows other systems to simply read the header and
 %% to load into the type table without translations.
+-spec create_header([ milang_ast:ast_node()], io:device()) -> 'ok'.
 create_header(AST, IoDev) ->
 	TranslationTable = build_translation_table(AST),
+	milang_log:it(debug, ?log_info, "Built that translation table: ~p", [TranslationTable]),
 	OutAST = create_header_ast(AST, TranslationTable),
 	lists:foreach(fun(HeaderWorthy) ->
 		ok = io:put_chars(IoDev, milang_ast:to_string(HeaderWorthy))
@@ -39,13 +42,13 @@ create_header(AST, IoDev) ->
 build_translation_table(AST) ->
 	lists:foldl(fun build_translation_table/2, #{}, AST).
 
-build_translation_table(#milang_ast{ type = declaration_module} = Node, Table) ->
-	#{ name := Name, exposing := Exposing } = Node#milang_ast.data,
+build_translation_table(#milang_ast{ data = #declaration_module{}} = Node, Table) ->
+	#declaration_module{ name = Name, exposing = Exposing } = Node#milang_ast.data,
 	lists:foldl(fun(ExposingNode, Acc) ->
 		add_remote_translation(Name, ExposingNode, Acc)
 	end, Table, Exposing);
-build_translation_table(#milang_ast{ type = declaration_import} = Node, Table) ->
-	#{ name := ModuleName, alias := Alias, exposing := Exposing} = Node#milang_ast.data,
+build_translation_table(#milang_ast{ data = #declaration_import{}} = Node, Table) ->
+	#declaration_import{ name = ModuleName, alias = Alias, exposing = Exposing} = Node#milang_ast.data,
 	TableWithAlias = case Alias of
 		undefined ->
 			Table;
@@ -55,16 +58,15 @@ build_translation_table(#milang_ast{ type = declaration_import} = Node, Table) -
 	lists:foldl(fun(ExposingNode, Acc) ->
 		add_remote_translation(ModuleName, ExposingNode, Acc)
 	end, TableWithAlias, Exposing);
-build_translation_table(#milang_ast{ type = declaration_type} = Node, Table) ->
-	#{ name := NameAST} = Node#milang_ast.data,
-	LocalName = NameAST#milang_ast.data,
+build_translation_table(#milang_ast{ data = #declaration_type{}} = Node, Table) ->
+	#declaration_type{ name = LocalName} = Node#milang_ast.data,
 	case maps:find(LocalName, Table) of
 		error ->
 			% it's an internal type (not exposed), so we can ignore it.
 			Table;
 		{ok, RemoteName} ->
-			#{ module := Module} = RemoteName,
-			#{ args := Args, constraints := Constraints, constructors := Constructors } = Node#milang_ast.data,
+			{_, #{ module := Module}} = RemoteName,
+			#declaration_type{ args = Args, constraints = Constraints, constructors = Constructors } = Node#milang_ast.data,
 			lists:foldl(fun(TypeNode, Acc) ->
 				add_remote_translation(Module, TypeNode, Acc)
 			end, Table, Args ++ Constraints ++ Constructors)
@@ -72,120 +74,103 @@ build_translation_table(#milang_ast{ type = declaration_type} = Node, Table) ->
 build_translation_table(_, Table) ->
 	Table.
 
-add_remote_translation(ModuleName, #milang_ast{ type = type_name_local } = Node, Table) ->
-	LocalName = Node#milang_ast.data,
-	NewName = #{ name => LocalName, module => ModuleName },
-	Table#{ LocalName => NewName };
-add_remote_translation(ModuleName, #milang_ast{ type = function_name_local } = Node, Table) ->
-	LocalName = Node#milang_ast.data,
-	NewName = #{ name => LocalName, module => ModuleName },
-	Table#{ LocalName => NewName };
-add_remote_translation(ModuleName, #milang_ast{ type = function_name_symbol} = Node, Table) ->
-	LocalName = Node#milang_ast.data,
-	NewName = #{ name => LocalName, module => ModuleName },
-	Table#{ LocalName => NewName };
-add_remote_translation(ModuleName, #milang_ast{ type = type_data } = Node, Table) ->
-	#{ name := NameAST, args := Args } = Node#milang_ast.data,
+add_remote_translation(ModuleName, {Nametype, LocalName} = OriginalName, Table) when is_atom(LocalName) ->
+	NewName = {Nametype, #{ local => LocalName, module => ModuleName }},
+	Table#{ OriginalName => NewName };
+add_remote_translation(ModuleName, #milang_ast{ data = #declaration_type{} } = Node, Table) ->
+	#declaration_type{ name = NameAST, args = Args } = Node#milang_ast.data,
 	MidTable = add_remote_translation(ModuleName, NameAST, Table),
 	lists:foldl(fun(ArgNode, Acc) ->
 		add_remote_translation(ModuleName, ArgNode, Acc)
 	end, MidTable, Args);
+add_remote_translation(ModuleName, #milang_ast{ data = #constructor{} } = Node, Table) ->
+	#constructor{ name = Name } = Node#milang_ast.data,
+	% The args use exising types, and thus get converted after we've built the
+	% translation table fully.
+	add_remote_translation(ModuleName, Name, Table);
 add_remote_translation(_Module, _Node, Table) ->
+	milang_log:it(debug, ?log_info, "Skipping tranlation for ~p.", [_Node]),
 	Table.
-	%% TODO add remote translations for type constructors.
 
 create_header_ast(AST, TranslationTable) ->
 	lists:filtermap(fun(Node) ->
 		maybe_convert_node(Node, TranslationTable)
 	end, AST).
 
-maybe_convert_node(#milang_ast{ type = declaration_function}, _Translations) ->
+maybe_convert_node(#milang_ast{ data = #declaration_function{}}, _Translations) ->
+	milang_log:it(debug, ?log_info, "ignoring declaration_function"),
 	false;
-maybe_convert_node(#milang_ast{ type = declaration_spec} = Node, Translations) ->
-	#{ name := SpecName } = Node#milang_ast.data,
-	case maps:find(SpecName#milang_ast.data, Translations) of
+maybe_convert_node(#milang_ast{ data = #declaration_spec{}} = Node, Translations) ->
+	#declaration_spec{ name = SpecName } = Node#milang_ast.data,
+	case maps:find(SpecName, Translations) of
 		error ->
+			milang_log:it(debug, ?log_info, "Ignoring declaration_spec for ~p", [SpecName]),
 			false;
 		{ok, _TrueName} ->
 			{true, convert_node(Node, Translations)}
 	end;
-maybe_convert_node(#milang_ast{ type = declaration_module}, _Translations) ->
+maybe_convert_node(#milang_ast{ data = #declaration_module{}}, _Translations) ->
+	milang_log:it(debug, ?log_info, "Ignoring declaration_module"),
 	false;
-maybe_convert_node(#milang_ast{ type = declaration_import}, _Translations) ->
+maybe_convert_node(#milang_ast{ data = #declaration_import{}}, _Translations) ->
+	milang_log:it(debug, ?log_info, "Ignoring declaration_import"),
 	false;
-maybe_convert_node(#milang_ast{ type = declaration_type} = Node, Translations) ->
-	#{ name := TypeName } = Node#milang_ast.data,
-	case maps:find(TypeName#milang_ast.data, Translations) of
+maybe_convert_node(#milang_ast{ data = #declaration_type{}} = Node, Translations) ->
+	#declaration_type{ name = TypeName } = Node#milang_ast.data,
+	case maps:find(TypeName, Translations) of
 		error ->
+			milang_log:it(debug, ?log_info, "Ignoring declaration_type for ~p", [TypeName]),
 			false;
 		{ok, _} ->
 			{true, convert_node(Node, Translations)}
 	end;
-maybe_convert_node(#milang_ast{ type = declaration_alias } = Node, Translations) ->
-	#{ name := TypeName } = Node#milang_ast.data,
-	case maps:find(TypeName#milang_ast.data, Translations) of
+maybe_convert_node(#milang_ast{ data = #declaration_alias{} } = Node, Translations) ->
+	#declaration_alias{ name = TypeName } = Node#milang_ast.data,
+	case maps:find(TypeName, Translations) of
 		error ->
+			milang_log:it(debug, ?log_info, "Ignoring declaration_alias for ~p", [TypeName]),
 			false;
 		{ok, _} ->
 			{true, convert_node(Node, Translations)}
 	end.
 
-convert_node(#milang_ast{ type = function_name_local} = Node, Translations) ->
-	case maps:find(Node#milang_ast.data, Translations) of
-		error ->
-			Node;
-		{ok, RemoteName} ->
-			Node#milang_ast{ type = function_name_remote, data = RemoteName }
-	end;
-convert_node(#milang_ast{ type = function_name_symbol } = Node, Translations) ->
-	case maps:find(Node#milang_ast.data, Translations) of
-		error ->
-			Node;
-		{ok, RemoteName} ->
-			Node#milang_ast{ type = function_name_remote, data = RemoteName }
-	end;
-convert_node(#milang_ast{ type = type_name_local } = Node, Translations) ->
-	case maps:find(Node#milang_ast.data, Translations) of
-		error ->
-			Node;
-		{ok, RemoteName} ->
-			Node#milang_ast{ type = type_name_remote, data = RemoteName}
-	end;
-convert_node(#milang_ast{ type = function_name_remote} = Node, Translations) ->
-	#{ module := Mod} = Data = Node#milang_ast.data,
-	case maps:find({module, Mod}, Translations) of
-		error ->
-			Node;
-		{ok, TrueModule} ->
-			NewData = Data#{ module => TrueModule },
-			Node#milang_ast{ data = NewData}
-	end;
-convert_node(#milang_ast{ type = type_name_remote} = Node, Translations) ->
-	#{ module := Mod} = Data = Node#milang_ast.data,
-	case maps:find({module, Mod}, Translations) of
-		error ->
-			Node;
-		{ok, TrueModule} ->
-			NewData = Data#{module => TrueModule},
-			Node#milang_ast{ data = NewData }
-	end;
-convert_node(#milang_ast{} = Node, Translations) ->
-	io:format("Node conversion naively: ~p~n", [Node]),
-	NewData = convert_node_data(Node#milang_ast.data, Translations),
-	Node#milang_ast{ data = NewData};
-convert_node(Wut, _Translations) ->
-	io:format("Not an ast node, likely something from a data that got through: ~p~n", [Wut]),
-	Wut.
+convert_node(Node, Translations) ->
+	milang_log:it(debug, ?log_info, "Converting node ~p", [Node]),
+	milang_ast:transform_data(fun(D) ->
+		convert_node_data(D, Translations)
+	end, Node).
 
-convert_node_data(Map, Translations) when is_map(Map) ->
-	Mapper = fun
-		(_K, Values) when is_list(Values) ->
-			[convert_node(V, Translations) || V <- Values];
-		(_K, Value) ->
-			convert_node(Value, Translations)
-	end,
-	maps:map(Mapper, Map);
-convert_node_data(List, Translations) when is_list(List) ->
-	[ convert_node(E, Translations) || E <- List ];
-convert_node_data(Data, _Translations) ->
-	Data.
+convert_node_data(#declaration_module{exposing = Exposing} = Data, Translations) ->
+	NewExposing = lists:map(fun(N) -> convert_node(N, Translations) end, Exposing),
+	Data#declaration_module{ exposing = NewExposing };
+convert_node_data(#declaration_spec{ name = SpecName, type = Type} = Data, Translations) ->
+	NewName = maps:get(SpecName, Translations, SpecName),
+	NewType = convert_node(Type, Translations),
+	Data#declaration_spec{ name = NewName, type = NewType };
+convert_node_data(#declaration_alias{ name = Name, alias_of = Original, constraints = Constraints} = Data, Translations) ->
+	NewName = maps:get(Name, Translations, Name),
+	NewOriginal = convert_node(Original, Translations),
+	NewConstraints = lists:map(fun(N) -> convert_node(N, Translations) end, Constraints),
+	Data#declaration_alias{ name = NewName, alias_of = NewOriginal, constraints = NewConstraints };
+convert_node_data(#declaration_type{ name = Name, constraints = Constraints, constructors = Constructors} = Data, Translations) ->
+	NewName = maps:get(Name, Translations, Name),
+	NewConstraints = lists:map(fun(N) -> convert_node(N, Translations) end, Constraints),
+	NewConstructors = lists:map(fun(N) -> convert_node(N, Translations) end, Constructors),
+	Data#declaration_type{ name = NewName, constraints = NewConstraints, constructors = NewConstructors };
+convert_node_data(#constructor{ name = Name, args = Args } = Data, Translations) ->
+	NewName = maps:get(Name, Translations, Name),
+	NewArgs = lists:map(fun(N) -> convert_node(N, Translations) end, Args),
+	Data#constructor{ name = NewName, args = NewArgs};
+convert_node_data(#type_concrete{ name = Name, args = Args } = Data, Translations) ->
+	NewName = maps:get(Name, Translations, Name),
+	NewArgs = [ convert_node(N, Translations) || N <- Args ],
+	Data#type_concrete{ name = NewName, args = NewArgs};
+convert_node_data(#type_record{ fields = Fields } = Data, Translations) ->
+	NewFields = [convert_node(F, Translations) || F <- Fields],
+	Data#type_record{ fields = NewFields };
+convert_node_data(#type_record_field{ type = Type } = Data, Translations) ->
+	NewType = convert_node(Type, Translations),
+	Data#type_record_field{ type = NewType };
+convert_node_data(#type_function{ args = Args} = Data, Translations) ->
+	NewArgs = [ convert_node(A, Translations) || A <- Args ],
+	Data#type_function{ args = NewArgs }.

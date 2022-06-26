@@ -4,7 +4,7 @@
 
 -type parse_ok(Ok) :: {ok, non_neg_integer(), Ok}.
 
--type parse_err(Err) :: {error, #{ location := location()} , Err }.
+-type parse_err(Err) :: {error, #{ location := location()} | Err }.
 
 -type parse_terminal(Err, Ok) :: parse_err(Err) | parse_ok(Ok).
 
@@ -57,6 +57,7 @@
 	, repeat_until/2
 	, repeat_until_error/1
 	, repeat_when/2
+	, repeat_when_self/1
 	, repeat/3
 	, chomp/0
 	, chomp/1
@@ -91,6 +92,14 @@ it(Binary, Parser) ->
 			{error, {parser_crash, What, Why}}
 	end.
 
+safe_fun_info(Parser) ->
+	try erlang:fun_info(Parser) of
+		I -> I
+	catch
+		_:_ ->
+			badfun
+	end.
+
 -spec default_acc(E, _, _) -> E.
 default_acc(E, _, _) -> E.
 
@@ -107,16 +116,16 @@ parse(Binary, Location, {push, Consume, NewParser, MaybeNewTag, NewAccFun, NewAc
 			NT
 	end,
 	NewContext = create_parser_context(NewParser, NewTag),
-	NewResult = NewParser(NewLocation, NewBinary),
+	NewResult = try_parser(NewParser, NewLocation, NewBinary),
 	parse(NewBinary, NewLocation, NewResult, NewAccFun, NewAccState, NewContext, NewStack);
 parse(Binary, Location, RawResult, AccFun, AccState, Context, Stack) ->
 	Result = expand_result(RawResult, #{ location => Location, parser_context => Context}),
 	AccContext = #{ location => Location, tag => maps:get(tag, Context)},
-	case AccFun(Result, AccContext, AccState) of
+	case try_accfun(AccFun, Result, AccContext, AccState) of
 		{next, Consume, NewParser, NewState} ->
 			{NewLocation, NewBinary} = consume(Consume, Location, Binary),
 			NewContext = create_parser_context(NewParser, maps:get(tag, Context)),
-			NewResult = NewParser(NewLocation, NewBinary),
+			NewResult = try_parser(NewParser, NewLocation, NewBinary),
 			parse(NewBinary, NewLocation, NewResult, AccFun, NewState, NewContext, Stack);
 		NewResult when Stack =:= [] ->
 			finalize(Binary, Location, NewResult);
@@ -124,6 +133,41 @@ parse(Binary, Location, RawResult, AccFun, AccState, Context, Stack) ->
 			NewResult = expand_result(NewResultSmall, #{ location => Location, parser_context => Context}),
 			[{NewBinary, NewLocation, NewAccFun, NewAccState, NewContext} | NewStack] = Stack,
 			parse(NewBinary, NewLocation, NewResult, NewAccFun, NewAccState, NewContext, NewStack)
+	end.
+
+try_parser(Parser, Location, Binary) ->
+	try Parser(Location, Binary) of
+		A -> A
+	catch
+		W:Y:S ->
+			io:format("Parser crashed!~n"
+				"    What: ~p~n"
+				"    Why: ~p~n"
+				"    Parser: ~p~n"
+				"    Location: ~p~n"
+				"    Binary: ~p~n"
+				"    Stack: ~p~n"
+				"    Parser Info: ~p~n"
+				, [W, Y, Parser, Location, Binary, S, safe_fun_info(Parser)]),
+		{error, {parser_crash, W, Y}}
+	end.
+
+try_accfun(AccFun, Result, Context, State) ->
+	try AccFun(Result, Context, State) of
+		A -> A
+	catch
+		W:Y:S ->
+			io:format("Accumulator crashed!~n"
+				"    What: ~p~n"
+				"    Why: ~p~n"
+				"    AccFun: ~p~n"
+				"    Result: ~p~n"
+				"    Context: ~p~n"
+				"    State: ~p~n"
+				"    Stack: ~p~n"
+				"    AccFun Info: ~p~n"
+				, [W,Y,AccFun, Result, Context, State, S, safe_fun_info(AccFun)]),
+			{error, {acc_fun_crash, W, Y}}
 	end.
 
 -spec create_parser_context(parser(_, _), Tag) -> parser_context(Tag).
@@ -475,7 +519,7 @@ repeat_until_error_acc({error, _}, _, {_, Acc}) ->
 repeat_until_error_acc({ok, C, _} = Ok, _, {Parser, Acc}) ->
 	{next, C, Parser, {Parser, [ Ok | Acc]}}.
 
--spec repeat_when(parser(ElementError, Ok), parser(_, _)) -> parser(ElementError, Ok).
+-spec repeat_when(parser(ElementError, Ok), parser(_, _)) -> parser(ElementError, [Ok]).
 repeat_when(Primary, DoContinue) ->
 	RecoveredContinue = recover(DoContinue, fun(Error) ->
 		success({error, Error})
@@ -501,6 +545,16 @@ repeat_when_acc({ok, C, [Primary, MaybeContinue]}, _, State) ->
 			Parser = NewState#repeat_when.parser,
 			{next, C, Parser, NewState}
 	end.
+
+-spec repeat_when_self(parser(Err, Ok)) -> parser(Err, [Ok]).
+repeat_when_self(Parser) ->
+	Keeper = parse:map(Parser, fun(E) -> {true, E} end),
+	Dropper = parse:map(Parser, fun(_) -> false end),
+	Test = parse:test(Dropper),
+	Repeated = parse:repeat_when(Keeper, Test),
+	parse:map(Repeated, fun(All) ->
+		lists:filtermap(fun(E) -> E end, All)
+	end).
 
 -spec repeat(non_neg_integer(), non_neg_integer(), parser(Err, Ok)) -> parser(Err, [Ok]).
 repeat(Min, Max, Parser) ->

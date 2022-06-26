@@ -21,9 +21,11 @@ groups() ->
 	].
 
 hello_world_test(Cfg) ->
+	milang_log:set_log_level(debug),
 	DataDir = proplists:get_value(data_dir, Cfg),
 	PrivDir = proplists:get_value(priv_dir, Cfg),
-	{ok, AST} = milang_parse:file(filename:join([DataDir, "HelloWorld.milang"])),
+	{ok, Tokens} = milang_parse:file(filename:join([DataDir, "HelloWorld.milang"])),
+	{ok, AST} = milang_lex:as_module(Tokens),
 	OutputFile = filename:join([PrivDir, "HelloWorld"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
 	ok = milang_compile:compile(AST, [{input_file_name, "HelloWorld.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
@@ -31,9 +33,11 @@ hello_world_test(Cfg) ->
 	?assertEqual("Hello, World!\n", Result).
 
 type_error_test(Cfg) ->
+	milang_log:set_log_level(debug),
 	DataDir = proplists:get_value(data_dir, Cfg),
 	PrivDir = proplists:get_value(priv_dir, Cfg),
-	{ok, AST} = milang_parse:file(filename:join([DataDir, "TypeError.milang"])),
+	{ok, Tokens} = milang_parse:file(filename:join([DataDir, "TypeError.milang"])),
+	{ok, AST} = milang_lex:as_module(Tokens),
 	OutputFile = filename:join([PrivDir, "TypeError"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
 	Got = try milang_compile:compile(AST, [{input_file_name, "TypeError.milang"}, {output_file_name, OutputFile}, {work_dir, WorkDir}]) of
@@ -47,16 +51,20 @@ type_error_test(Cfg) ->
 
 
 header_creation_test(Cfg) ->
+	milang_log:set_log_level(debug),
 	DataDir = proplists:get_value(data_dir, Cfg),
 	PrivDir = proplists:get_value(priv_dir, Cfg),
-	{ok, AST} = milang_parse:file(filename:join([DataDir, "CreateHeader.milang"])),
+	{ok, Tokens} = milang_parse:file(filename:join([DataDir, "CreateHeader.milang"])),
+	{ok, AST} = milang_lex:as_module(Tokens),
 	OutputFile = filename:join([PrivDir, "CreateHeader.milang-header"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
 	{ok, OutDev} = file:open(OutputFile, [write]),
 	ok = milang_header:create_header(AST, OutDev),
 	ok = file:close(OutDev),
-	{ok, HeaderASTWithDoc} = milang_parse:file(OutputFile),
-	{ok, ExpectedASTWithDoc} = milang_parse:file(filename:join([DataDir, "CreateHeader.milang-header"])),
+	{ok, HeaderTokens} = milang_parse:file(OutputFile),
+	{ok, ExpectedTokens} = milang_parse:file(filename:join([DataDir, "CreateHeader.milang-header"])),
+	{ok, HeaderASTWithDoc} = milang_lex:as_header(HeaderTokens),
+	{ok, ExpectedASTWithDoc} = milang_lex:as_header(ExpectedTokens),
 	HeaderAST = strip_text_artifacts(HeaderASTWithDoc),
 	ExpectedAST = strip_text_artifacts(ExpectedASTWithDoc),
 	assert_equal_asts(HeaderAST, ExpectedAST).
@@ -126,16 +134,21 @@ strip_text_artifacts(Data) when is_map(Data) ->
 	end, Data);
 strip_text_artifacts(Data) when is_list(Data) ->
 	lists:map(fun strip_text_artifacts/1, Data);
+strip_text_artifacts(Tuple) when is_tuple(Tuple) ->
+	AsList = tuple_to_list(Tuple),
+	AsFixedList = strip_text_artifacts(AsList),
+	list_to_tuple(AsFixedList);
 strip_text_artifacts(Term) ->
 	Term.
 
 
 
 comment_test(Cfg) ->
+	milang_log:set_log_level(debug),
 	DataDir = proplists:get_value(data_dir, Cfg),
 	PrivDir = proplists:get_value(priv_dir, Cfg),
-	{ok, AST} = milang_parse:file(filename:join([DataDir, "CommentTest.milang"])),
-
+	{ok, Tokens} = milang_parse:file(filename:join([DataDir, "CommentTest.milang"])),
+	{ok, AST} = milang_lex:as_module(Tokens),
 	OutputFile = filename:join([PrivDir, "CommentTest"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
 	ok = milang_compile:compile(AST, [{input_file_name, "CommentTest.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
@@ -143,6 +156,7 @@ comment_test(Cfg) ->
 	?assertEqual("", Result).
 
 map_syntax_test(Cfg) ->
+	milang_log:set_log_level(debug),
 	DataDir = proplists:get_value(data_dir, Cfg),
 	PrivDir = proplists:get_value(priv_dir, Cfg),
 	{ok, AST} = milang_parse:file(filename:join([DataDir, "MapTest.milang"])),

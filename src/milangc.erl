@@ -124,11 +124,25 @@ make_dir_or_die(Dir) ->
 	end.
 
 compile(#{ input_file := InFile } = Options) ->
-	case milang_parse:file(InFile) of
-		{ok, AST} ->
-			ok = maybe_create_header(AST, Options),
-			ok = maybe_create_beam(AST, Options),
-			ok = maybe_create_exe(AST, Options);
+	MaybeTokens = milang_parse:file(InFile),
+	MaybeModuleAST = 'Result':and_then(fun(Tokens) ->
+		milang_lex:as_module(Tokens)
+	end, MaybeTokens),
+	MaybeHeaderAST = 'Result':and_then(fun(Tokens) ->
+		milang_lex:as_header(Tokens)
+	end, MaybeModuleAST),
+	_ = 'Result':map(fun(AST) ->
+		maybe_create_header(AST, Options)
+	end, MaybeHeaderAST),
+	_ = 'Result':map(fun(AST) ->
+		maybe_create_beam(AST, Options)
+	end, MaybeModuleAST),
+	_ = 'Result':map(fun(AST) ->
+		maybe_create_exe(AST, Options)
+	end, MaybeModuleAST),
+	case MaybeModuleAST of
+		{ok, _} ->
+			ok;
 		Error ->
 			io:format("Parsing error:~n~p~n", [Error]),
 			halt(2)
