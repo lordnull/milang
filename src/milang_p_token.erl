@@ -1,32 +1,32 @@
 -module(milang_p_token).
 
--type declaration_module() :: {declaration_module, milang_ast:location(), unicode:chardata()}.
--type declaration_import() :: {declaration_import, milang_ast:location(), unicode:chardata()}.
--type declaration_type() :: {declaration_type, milang_ast:location(), unicode:chardata()}.
--type declaration_alias() :: {declaration_alias, milang_ast:location(), unicode:chardata()}.
--type declaration_class() :: {declaration_class, milang_ast:location(), unicode:chardata()}.
+-include_lib("kernel/include/logger.hrl").
+
+-type mi_identifier()
+	:: unicode:chardata()
+	|  #{ local := unicode:chardata(), module := unicode:chardata() }
+	.
+
+-type keyword() :: {keyword, milang_ast:location(), atom()}.
 -type whitespace() :: {whitespace, milang_ast:location(), unicode:chardata()}.
 -type comment() :: {comment, milang_ast:location(), unicode:chardata()}.
--type name_upcase() :: {name_update, milang_ast:location(), unicode:chardata()}.
--type name_downcase() :: {name_downcase, milang_ast:location(), unicode:chardata()}.
--type name_underscore() :: {name_underscore, milang_ast:location(), unicode:chardata()}.
--type name_symbol() :: {name_symbol, milang_ast:location(), unicode:chardata()}.
--type name_symbol_quoted() :: {name_symbol_quoted, milang_ast:location(), unicode:chardata()}.
+-type identifier_bound() :: {identifier, milang_ast:location(), mi_identifier()}.
+-type identifier_ignored() :: {identifier_ignored, milang_ast:location(), mi_identifier()}.
+-type identifier_type() :: {identifier_type, milang_ast:location(), mi_identifier()}.
 -type literal_float() :: {literal_float, milang_ast:location(), float()}.
 -type literal_integer() :: {literal_integer, milang_ast:location(), integer()}.
 -type literal_string() :: {literal_string, milang_ast:location(), unicode:chardata()}.
 -type syntax_implies() :: {syntax_implies, milang_ast:location(), unicode:chardata()}.
 -type syntax_infix_left() :: {syntax_infix_left, milang_ast:location(), unicode:chardata()}.
 -type syntax_infix_right() :: {syntax_infix_right, milang_ast:location(), unicode:chardata()}.
--type syntax_keyword() :: {syntax_keyword, milang_ast:location(), 'when' | 'exposing' | 'match' | 'as'}.
+-type syntax_infix_indicator() :: {syntax_infix_indicator, milang_ast:location(), unicode:chardata()}.
+-type syntax_keyword() :: {syntax_keyword, milang_ast:location(), 'when' | 'exposing' | 'match' | 'as' | 'func'}.
 -type syntax_dot() :: {syntax_dot, milang_ast:location(), unicode:chardata()}.
 -type syntax_element_seperator() :: {syntax_element_seperator, milang_ast:location(), unicode:chardata()}.
 -type syntax_open(T) :: {syntax_open, milang_ast:location(), T}.
 -type syntax_close(T) :: {syntax_close, milang_ast:location(), T}.
 -type syntax_open_list() :: syntax_open(list).
 -type syntax_close_list() :: syntax_close(list).
--type syntax_open_map() :: syntax_open(map).
--type syntax_close_map() :: syntax_close(map).
 -type syntax_open_record() :: syntax_open(record).
 -type syntax_close_record() :: syntax_close(record).
 -type syntax_open_subexpression() :: syntax_open(subexpression).
@@ -36,18 +36,9 @@
 -type eof() :: {token_name, milang_ast:location(), unicode:chardata()}.
 
 -type token() ::
-	  declaration_module()
-	| declaration_import()
-	| declaration_type()
-	| declaration_alias()
-	| declaration_class()
+	  keyword()
 	| whitespace()
 	| comment()
-	| name_upcase()
-	| name_downcase()
-	| name_underscore()
-	| name_symbol()
-	| name_symbol_quoted()
 	| literal_float()
 	| literal_integer()
 	| literal_string()
@@ -59,51 +50,54 @@
 	| syntax_element_seperator()
 	| syntax_open_list()
 	| syntax_close_list()
-	| syntax_open_map()
-	| syntax_close_map()
 	| syntax_open_record()
 	| syntax_close_record()
 	| syntax_open_subexpression()
 	| syntax_close_subexpression()
 	| syntax_bind()
 	| syntax_spec()
+	| identifier_type()
+	| identifier_ignored()
+	| identifier_bound()
 	| eof()
 	.
 
 -export_type([ token/0 ]).
 
 -export(
-	[ declaration_module/0
-	, declaration_import/0
-	, declaration_type/0
-	, declaration_alias/0
-	, declaration_class/0
+	[ keyword_module/0
+	, keyword_import/0
+	, keyword_alias/0
+	, keyword_spec/0
+	, keyword_let/0
+	, keyword_function/0
+	, keyword_match/0
+	, keyword_when/0
+	, keyword_class/0
+	, keyword_implements/0
+	, keyword_as/0
 	, whitespace/0
 	, comment/0
-	, name_upcase/0
-	, name_downcase/0
-	, name_underscore/0
-	, name_symbol/0
-	, name_symbol_quoted/0
 	, literal_float/0
 	, literal_integer/0
 	, literal_string/0
+	, identifier_ignored/0
+	, identifier_type/0
+	, identifier_bound/0
+	, identifier_bindable/0
+	, syntax_bind/0
 	, syntax_implies/0
 	, syntax_infix_left/0
 	, syntax_infix_right/0
-	, syntax_keyword/0
+	, syntax_infix_indicator/0
 	, syntax_dot/0
 	, syntax_element_seperator/0
 	, syntax_open_list/0
 	, syntax_close_list/0
-	, syntax_open_map/0
-	, syntax_close_map/0
 	, syntax_open_record/0
 	, syntax_close_record/0
 	, syntax_open_subexpression/0
 	, syntax_close_subexpression/0
-	, syntax_bind/0
-	, syntax_spec/0
 	, eof/0
 	, tokens/0
 	]).
@@ -111,62 +105,98 @@
 -spec tokens() -> parse:parser(term(), [ token() ]).
 tokens() ->
 	FirstOf = parse:first_of(
-		[ declaration_module()
-		, declaration_import()
-		, declaration_type()
-		, declaration_alias()
-		, declaration_class()
+		[ keyword_module()
+		, keyword_import()
+		, keyword_alias()
+		, keyword_type()
+		, keyword_spec()
+		, keyword_let()
+		, keyword_function()
+		, keyword_match()
+		, keyword_when()
+		, keyword_class()
+		, keyword_as()
+		, keyword_implements()
+		, keyword_expose()
+		, keyword_expose_all()
 		, whitespace()
 		, comment()
 		, literal_float()
 		, literal_integer()
 		, literal_string()
+		, syntax_bind()
 		, syntax_implies()
 		, syntax_infix_left()
 		, syntax_infix_right()
-		, syntax_keyword()
+		, syntax_infix_indicator()
 		, syntax_dot()
 		, syntax_element_seperator()
 		, syntax_open_list()
 		, syntax_close_list()
-		, syntax_open_map()
-		, syntax_close_map()
 		, syntax_open_record()
 		, syntax_close_record()
 		, syntax_open_subexpression()
 		, syntax_close_subexpression()
-		, syntax_bind()
-		, syntax_spec()
-		, name_upcase()
-		, name_downcase()
-		, name_underscore()
-		, name_symbol()
-		, name_symbol_quoted()
-	]),
+		, identifier_bound()
+		, identifier_ignored()
+		, identifier_type()
+		]),
 	UntilEnd = parse:repeat_until(FirstOf, eof()),
 	parse:map(UntilEnd, fun({E, End}) ->
 		E ++ [End]
 	end).
 
--spec declaration_module() -> parse:parser(term(), declaration_module()).
-declaration_module() ->
-	parse:tag(declaration_module, parse:string(<<"-module">>)).
+keyword(AsAtom) ->
+	FollowedBy = parse:first_of([ comment(), whitespace() ]),
+	Test = parse:test(FollowedBy),
+	Keyword = parse:string(atom_to_binary(AsAtom, utf8)),
+	Series = parse:series([Keyword, Test]),
+	Mapped = parse:map(Series, fun([_, _]) ->
+		AsAtom
+	end),
+	parse:tag(keyword, Mapped).
 
--spec declaration_import() -> parse:parser(term(), declaration_import()).
-declaration_import() ->
-	parse:tag(declaration_import, parse:string(<<"-import">>)).
+keyword_module() ->
+	keyword(module).
 
--spec declaration_type() -> parse:parser(term(), declaration_type).
-declaration_type() ->
-	parse:tag(declaration_type, parse:string(<<"-type">>)).
+keyword_type() ->
+	keyword('type').
 
--spec declaration_alias() -> parse:parser(term(), declaration_alias()).
-declaration_alias() ->
-	parse:tag(declaration_alias, parse:string(<<"-alias">>)).
+keyword_alias() ->
+	keyword('alias').
 
--spec declaration_class() -> parse:parser(term(), declaration_class()).
-declaration_class() ->
-	parse:tag(declaration_class, parse:string(<<"-class">>)).
+keyword_let() ->
+	keyword('let').
+
+keyword_spec() ->
+	keyword('spec').
+
+keyword_match() ->
+	keyword('match').
+
+keyword_when() ->
+	keyword('when').
+
+keyword_class() ->
+	keyword('class').
+
+keyword_implements() ->
+	keyword('implements').
+
+keyword_expose() ->
+	keyword('expose').
+
+keyword_expose_all() ->
+	keyword('expose all').
+
+keyword_as() ->
+	keyword('as').
+
+keyword_function() ->
+	keyword('function').
+
+keyword_import() ->
+	keyword('import').
 
 -spec whitespace() -> parse:parser(term(), whitespace()).
 whitespace() ->
@@ -174,76 +204,55 @@ whitespace() ->
 
 -spec comment() -> parse:parser(term(), comment()).
 comment() ->
-	Ending = parse:string(<<"-}">>),
-	MaybeNested = parse:first_of([parse:lazy(fun comment/0), parse:chomp()]),
-	Repeat = parse:repeat_until(MaybeNested, Ending),
-	Series = parse:series([parse:string(<<"{-">>), Repeat]),
+	Repeat = parse:chomp_until(<<" -}">>),
+	Series = parse:series([parse:string(<<"{- ">>), Repeat]),
 	Mapper = fun([_, {Doc, _}]) ->
-		JustChars = lists:map(fun(D) ->
-			case D of
-				{_, _, C} -> ["{-", C, "-}"];
-				_ -> D
-			end
-		end, Doc),
-		unicode:characters_to_binary(JustChars)
+		unicode:characters_to_binary(Doc)
 	end,
 	Mapped = parse:map(Series, Mapper),
 	parse:tag(comment, Mapped).
 
--spec name_downcase() -> parse:parser(term(), name_downcase()).
-name_downcase() ->
-	RegEx = parse:regex("\\p{Ll}[\\w]*", first),
-	parse:tag(name_downcase, RegEx).
+identifier_type() ->
+	Regex = "[\\p{Lu}][^'\"\\[\\]\\{\\}\\(\\),«»\\.\\s]*",
+	identifier(Regex, identifier_type).
 
--spec name_upcase() -> parse:parser(term(), name_upcase()).
-name_upcase() ->
-	RegEx = parse:regex("\\p{Lu}[\\w]*", first),
-	parse:tag(name_upcase, RegEx).
 
--spec name_underscore() -> parse:parser(term(), name_underscore()).
-name_underscore() ->
-	RegEx = parse:regex("_([\\p{Ll}][\\w]*)?", first),
-	parse:tag(name_underscore, RegEx).
+identifier_bound() ->
+	Regex = "[^'\"\\[\\]\\{\\}\\(\\),«»_\\.\\s\\d\\p{Lu}][^'\"\\[\\]\\{\\}\\(\\),«»\\.\\s]*",
+	identifier(Regex, identifier_bound).
 
--spec name_symbol() -> parse:parser(term(), name_symbol()).
-name_symbol() ->
-	DisallowedSet = ordsets:from_list("'\"[]{}(),«»:_"),
-	AllowedRegexTest = "[\\pS\\pP]+",
-	{ok, Compiled} = re:compile(AllowedRegexTest, [unicode, ucp]),
-	ChompTest = fun(C) ->
-		case ordsets:is_element(C, DisallowedSet) of
-			true ->
-				false;
-			false ->
-				case re:run([C], Compiled) of
-					{match, _} ->
-						true;
-					nomatch ->
-						false
-				end
+identifier(Regex, Tag) ->
+	ModulePartRegex = "([^'\"\\[\\]\\{\\}\\(\\),«»\\.\\s]+\\.)*",
+	FullRegex = [ModulePartRegex, Regex],
+	ParseBase = parse:regex(FullRegex, first),
+	Identifier = parse:map(ParseBase, fun(Iolist) ->
+		AsBinary = unicode:characters_to_binary(Iolist),
+		Split = string:split(AsBinary, ".", all),
+		[Local | RemoteReversed] = lists:reverse(Split),
+		case lists:join($., lists:reverse(RemoteReversed)) of
+			[] ->
+				Local;
+			Remote ->
+				#{ local => Local, module => unicode:characters_to_binary(Remote) }
 		end
-	end,
-	ChompP = parse:chomp_while(ChompTest),
-	ValueCheckP = parse:unless(ChompP, fun
-		(<<"=">>) ->
-			{error, solo_equals_not_allowed};
-		(<<".">>) ->
-			{error, solo_dot_not_allowed};
-		(<<>>) ->
-			{error, zero_length_infix_not_valid};
-		(_Passing) ->
-			ok
 	end),
-	parse:tag(name_symbol, ValueCheckP).
-
--spec name_symbol_quoted() -> parse:parser(term(), name_symbol_quoted()).
-name_symbol_quoted() ->
-	Series = parse:series([parse:character($'), name_symbol(), parse:character($')]),
-	Tagged = parse:tag(name_symbol_quoted, Series),
-	parse:map(Tagged, fun({T, L, [_, S, _]}) ->
-		{_, _, N} = S,
-		{T, L, N}
+	Tagged = parse:tag(Tag, Identifier),
+	parse:andThen(Tagged, fun
+		({_, _, <<"=">>}) ->
+			parse:fail(solo_equals_invalid);
+		({_, _, #{ local := <<"=">>}}) ->
+			parse:fail(solo_equals_invalid);
+		(V) ->
+			parse:success(V)
 	end).
+
+identifier_ignored() ->
+	Regex = "_[^'\"\\[\\]\\{\\}\\(\\),«»_\\.\\s]*",
+	ParseBase = parse:regex(Regex, first),
+	parse:tag(identifier_ignored, ParseBase).
+
+identifier_bindable() ->
+	parse:first_of([ identifier_bound(), identifier_ignored() ]).
 
 -spec literal_string() -> parse:parser(term(), literal_string()).
 literal_string() ->
@@ -297,12 +306,10 @@ syntax_infix_left() ->
 syntax_infix_right() ->
 	parse:tag(syntax_infix_right, parse:regex(<<"«+"/utf8>>, first)).
 
--spec syntax_keyword() -> parse:parser(term(), syntax_keyword()).
-syntax_keyword() ->
-	Tagged = parse:tag(syntax_keyword, parse:regex(<<"(when|match|exposing|as)">>, first)),
-	parse:map(Tagged, fun({T, L, Iolist}) ->
-		{T, L, binary_to_atom(unicode:characters_to_binary(Iolist), utf8)}
-	end).
+
+-spec syntax_infix_indicator() -> parse:parser(term(), syntax_infix_indicator()).
+syntax_infix_indicator() ->
+	parse:tag(syntax_infix_indicator, parse:character($')).
 
 -spec syntax_dot() -> parse:parser(term(), syntax_dot()).
 syntax_dot() ->
@@ -315,7 +322,6 @@ syntax_element_seperator() ->
 -type oc_parser() :: char() | unicode:chardata() | parse:parser(any(), any()).
 -spec
 	syntax_open(oc_parser(), list) -> parse:parser(term(), syntax_open_list())
-		; (oc_parser(), map) -> parse:parser(term(), syntax_open_map())
 		; (oc_parser(), record) -> parse:parser(term(), syntax_open_record())
 		; (oc_parser(), subexpression) -> parse:parser(term(), syntax_open_subexpression()).
 
@@ -331,7 +337,6 @@ syntax_open(Parser, Type) ->
 
 -spec
 	syntax_close(oc_parser(), list) -> parse:parser(term(), syntax_close_list())
-		; (oc_parser(), map) -> parse:parser(term(), syntax_close_map())
 		; (oc_parser(), record) -> parse:parser(term(), syntax_close_record())
 		; (oc_parser(), subexpression) -> parse:parser(term(), syntax_close_subexpression()).
 
@@ -353,14 +358,6 @@ syntax_open_list() ->
 syntax_close_list() ->
 	syntax_close($], list).
 
--spec syntax_open_map() -> parse:parser(term(), syntax_open_map()).
-syntax_open_map() ->
-	syntax_open(<<"{=">>, map).
-
--spec syntax_close_map() -> parse:parser(term(), syntax_close_map()).
-syntax_close_map() ->
-	syntax_close(<<"=}">>, map).
-
 -spec syntax_open_record() -> parse:parser(term(), syntax_open_record()).
 syntax_open_record() ->
 	syntax_open(<<"{">>, record).
@@ -380,10 +377,6 @@ syntax_close_subexpression() ->
 -spec syntax_bind() -> parse:parser(term(), syntax_bind()).
 syntax_bind() ->
 	parse:tag(syntax_bind, parse:character($=)).
-
--spec syntax_spec() -> parse:parser(term(), syntax_spec()).
-syntax_spec() ->
-	parse:tag(syntax_spec, parse:character($:)).
 
 -spec eof() -> parse:parser(term(), eof()).
 eof() ->

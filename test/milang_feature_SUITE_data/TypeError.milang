@@ -1,5 +1,5 @@
--module TypeError exposing [,main].
+module TypeError.
 
-main : List String -> Integer.
-main _ ->
+expose spec main = List String -> Integer.
+function main _ ->
 	"hello".

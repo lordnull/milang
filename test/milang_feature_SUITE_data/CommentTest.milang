@@ -1,17 +1,11 @@
 {- The opening comment for the module -}
--module CommentTest exposing [, main ].
-
-{- Another comment, describing main this time. {- and a sub comment for
-good measure.-} Did you see how the sub comment spanned mulitple lines? -}
+module CommentTest.
 
 {- And yet another comment. This one is meant to go on long enough to force me
 to hit enter to wrap at 80, which it did about 60 characters ago. -}
 
-main : {- The list of arguments passed in on the command line. -} List String -> {- The exit code. -} Integer.
+expose spec main = {- The list of arguments passed in on the command line. -} List String -> {- The exit code. -} Integer.
 {- By the way, the space before or after the dashes is not optional. -}
-main _ ->
+let main = function _ ->
 	{- never fails! -}
 	0.
-
-{- and because we all love {- a weridly nested {- deeply nested -} traling -}
-new lined comment. -}

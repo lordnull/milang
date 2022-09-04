@@ -1,0 +1,333 @@
+This is the official specification of the Milang Programming language. It is
+a relatively informal style, but if implementation and this doc disagree, it is
+an urgent bug that they be made to agree. Generally, this document should win.
+
+# Dependencies
+
+To compile most any language requires external code. Pulling all that into the
+repository is poor planning. Milang has no package manager, nor any specific
+requirements of a package manager.
+
+The milang compiler takes two options, that can also be revealed as enviroment
+variables. For the compilier options, `milangc --help` will specify what to
+use.
+
+## MILANG_LIB_DIRS
+
+Like the unix search path. This is a list of directories where milang packages
+can be found. It is used to lookup milang header information, as well as the
+compiled results for linking. It is not expected nor required to include source
+code.
+
+## MILANG_SRC_DIRS
+
+Like the unix search path. This is a list of directories where milang src files
+and associated package information can be found. These are intended to be
+compiled, and therefore should not hold headers nor compiled results.
+
+## Packages
+
+!! This is a work in progress.
+
+Milang dependencies and projects are organized as a tree of packages. A package
+is a name, list of included packages, and list of modules. The included packages
+are not the same as dependencies. They are an organizational tool to help the
+developer separate concerns. An included package is not intended to be
+distributed independently of the parent package, though its modules can be
+imported into other modules independently.
+
+The name of a package is the same as the base name of the containing directory.
+Multiple packages may have the same subpackage or module names. Therefore, each
+top level package _must_ have a unique name.
+
+To include a module in a top level package, the top level package name may be
+omitted provided there is no name collision with other module names in other
+packages.
+
+For example, given the following packages:
+
+```text
+-+- package-a
+ +--+- sub-package-a
+ |  +---- list.milang
+ +---- numbers.milang
+ +---- letters.milang
+```
+
+```text
+-+- package-b
+ +--+- sub-package-a
+ |  +--- list.milang
+ |  +--- array.milang
+ +---- numbers.milang
+```
+
+The following holds:
+* `import letters.` resolves to the module in package a.
+* `import numbers.` results in an error as we don't know if we mean package a
+  or package b.
+* `import sub-package-b.array` resolves to the module in package b.
+* `import package-a.sub-package-a.list` resolves to the module package a.
+
+# Module
+
+Each file in Milang represents a single module. A file cannot contain more than
+one module, nor can one module be spread across multiple files.
+
+The module name _must_ match the base name of the file. For example, given the
+file `list.milang`, the module must be `list`.
+
+A module may start with whitespace and comments. The comments are the module
+documentation.
+
+After this, the module _must_ have a module declaration.
+
+A module name is any valid milang identifier.
+
+# syntactic parts.
+
+## local identifier
+
+A series of any non-whitespace characters starting with a non-digit, non-underscore
+excluding the following:
+* single quote '
+* double quote "
+* square brackets []
+* curly brackets {}
+* parenthesis ()
+* double-angle brackets «»
+* dots .
+* commas ,
+
+## remote identifier
+
+A series of local identifiers joined by dots (.). This indicates a reference to
+another module. See the packages section for module path resolution.
+
+## ignored identifier
+
+A local identifier preceeded by an underscore (_) will not be bound to a valid.
+The name is used to help humans understand the code.
+
+## keywords
+
+The following are keywords. If an identifier and keyword collide, which takes
+precedence depends on context. For example, consider the following code:
+
+```milang
+let let = SomeModule.let 5.
+```
+
+The first `let` is a keyword, indicating a binding. The second `let` is
+interpreted as a local identifier. The 3rd let is part of a remote identifier,
+and interpreted as the local part of that.
+
+It is generally bad form use identifiers that look the same as keywords, and this
+may be an error in the future.
+
+The keywords are:
+
+* let - bind a name to an expression.
+* spec - stat the expected type of a bound name.
+* expose - expose a spec, type, or class.
+* expose all - when exposing a type, expose the constructors too.
+* function - an expression that creates a callable function.
+* -> - ends the list of arguments for a function and begins the body.
+* type - define a data structure that can be pattern matched.
+* class - define a set of functions a type can implement.
+* when - start a list of constraints.
+* match - compare an expression with a set of tests.
+* with - start a set of match tests.
+* teach - implement a class for the given type.
+* . - end a declaration, clause, or certain expressions.
+
+## comments
+
+Comments start with `{- ` and end at the first ` -}`. There are no line-level
+comments, nor comment nesting.
+
+When compiling milang code, comments are attached to the closest code structure,
+except when the comment occurs before the closing character of a code structure.
+As such, comments are _always_ documentation of the code structure.
+
+For example:
+```milang
+{- this is module documentation. -}
+module list.
+
+{- this documents the list type. -}
+type list a = [
+	{- this documents the `end` constructor -}
+	, end
+	, cons a (list a)
+	].
+
+{- this documents the exposed spec for map -}.
+expose spec map (a -> b) -> list a -> list b.
+{- this documents the list.map function itself. -}
+let map = function f l ->
+	let foldFun = function e acc ->
+		[f e | acc ].
+	let reversed = foldl foldFun l.
+	reverse reversed
+	{- this comment is lost in compiling, and is likely to be lost with the
+	visual editor as well. -}
+	.
+```
+
+## Spacing
+
+A particular format for spacing is not enforced. Where spaces are is enforced.
+With things like `a+b` being valid identifiers, spaces are required.
+
+Anywhere a space may go, a comment can go as well. A comment counts as a space.
+
+## literals
+
+Literals are chosen to minimize diff and ambiguity.
+
+### Integer
+
+A literal integer is any series of digits that is optional preceeded by a sign.
+
+* 1
+* +1
+* 100
+* -37
+
+### Float
+
+A literal float must have digits before and after the ".". A number without a "."
+is an integer.
+
+* 1.0
+* 0.1
+* -9.37
+
+### String
+
+Double-quote enclosed. Usual escape sequences apply, but putting returns in the
+string is perfectly valid. The only escape sequences requred are double quotes
+and backslashed.
+
+```milang
+let string = "This is an example string.
+
+There will be 2 newlines before this sentance.
+
+To show a double quote in the string (\"), preceed it with a slash (\\).
+
+To show a slash, preceed it with another slash (\\\\).".
+```
+
+### list
+
+Lists are created using square brackets. Elements in a list are _always_
+preceeded by a comma.
+
+```milang
+let l = [,1,2,3].
+let l2 = [
+	,1
+	,2
+	,3
+	].
+	```
+
+### record
+
+Records are used to group heterogeneous types together with names. The types are
+generated at compile time. Each field / value pair in a record is _always_
+preceeded by a comma.
+
+```milang
+spec r = { , greeting = string, name = string }.
+let r = {, greeting = "hi", name = "roger" }.
+
+let hello_world = function who ->
+	let baser = r.
+	let fixedr =
+		{baser |
+		, greeting = "hello"
+		, name = who }.
+	let { greeting, name} = fixedr.
+	System.Print.ln (greeting ++ ", " ++ name ++"!").
+
+## Grammer by example
+```milang
+{- documentation for a module. All declarations end with a dot.-}
+module list.
+
+{- document the exposed type -}
+expose all type list a = [
+	, nil
+	, cons a (list a)
+	].
+
+{- document the exposed spec -}
+expose spec empty = list a.
+let empty = [].
+
+{- we can define a binding using any characters we want. -}
+expose spec :: = a -> list a -> list a.
+let :: = function newHead list ->
+	cons newHead list.
+
+{- this spec shows how to spec functions that take functions, as well as how
+to define recursive functions. -}
+expose spec foldl = (e -> acc) -> acc -> list e.
+let foldl = function foldFunc acc list ->
+	match list with
+		nil ->
+			acc.
+		cons e tail ->
+			foldl foldFunc (foldFunc acc) tail.
+	. {- this period is to close up the match expression. -}
+	. {- this period is to close up the function expression. -}
+
+expose spec reverse = list a -> list a.
+let reverse = function l ->
+	let foldFun = function e acc ->
+		{- the single quote here indicates the '::' is an infix operation. -}
+		e ':: acc.
+	foldl foldFun [] l.
+
+{- we define map in terms of foldl and reverse, so we could not define map
+until now. milang adds names as it encounters them. -}
+expose spec map = (a -> b) -> list a -> list b.
+{- we can't use the name 'list' as an arg as it already represents something else.
+In this case, the type 'list'. -}
+let map = function mapper l ->
+	let foldFun = function e acc ->
+		(mapper e) ':: acc.
+	{- here we're using the pipe function to take the result of the fold and
+	send it to the reverse function. -}
+	foldl foldFun [] l '| reverse.
+
+{- we don't need to spec a binding if we don't plan to expose it. However, the
+_only_ way to expose a binding is to spec it. -}
+let internal_thing = function _ -> [
+	,1
+	,2
+	,3
+	].
+
+{- adding a constraint to a function. -}
+expose spec sum when [ , a number ] = list a -> a.
+let sum = function numbers ->
+	foldl + 0 numbers.
+
+{- and sometimes we want a short-hand for common types. Mainly used for record. -}
+alias number-list when [,a number] = list a.
+
+```
+
+
+
+
+
+
+
+
+
+

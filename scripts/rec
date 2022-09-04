@@ -1,0 +1,41 @@
+#! /usr/bin/env escript
+
+main([]) ->
+	io:format("I need at least a record name.~n"),
+	1;
+main([RecName | FieldNames]) ->
+	ok = write_exports(FieldNames),
+	ok = write_new(RecName, FieldNames),
+	ok = lists:foreach(fun(F) ->
+		write_field(RecName, F)
+	end, FieldNames).
+
+write_exports(Fields) ->
+	io:put_chars("-export("),
+	io:format("~n	[ new/~p", [length(Fields)]),
+	ok = lists:foreach(fun(F) ->
+		io:format("~n	, '~s'/1, '~s'/2", [F, F])
+	end, Fields),
+	io:put_chars("\n	]).\n\n").
+
+write_new(Recname, FieldNames) ->
+	io:put_chars("new("),
+	{Args, _} = lists:mapfoldl(fun(_, N) ->
+		{io_lib:format("V~p", [N]), N+1}
+	end, 0, FieldNames),
+	Kv = lists:zip(FieldNames, Args),
+	ArgsList = lists:join($, , Args),
+	io:put_chars(ArgsList),
+	io:format(") -> #'~s'{", [Recname]),
+	Assigns = lists:map(fun({F, A}) ->
+		io_lib:format("'~s'=~s", [F, A])
+	end, Kv),
+	JoinedAssigns = lists:join($, , Assigns),
+	io:put_chars(JoinedAssigns),
+	io:put_chars("}.\n\n").
+
+write_field(Rec, Field) ->
+	io:format("'~s'(R) -> R#'~s'.'~s'.~n", [Field, Rec, Field]),
+	io:format("'~s'(V,R) -> R#'~s'{ '~s' = V }.~n~n", [Field, Rec, Field]).
+
+

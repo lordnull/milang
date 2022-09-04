@@ -1,2 +1,1 @@
-
-System.Print.ln : Core.String -> Core.Unit.
+expose spec System.Print.ln = Core.String -> Core.Unit.

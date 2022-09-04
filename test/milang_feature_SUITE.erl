@@ -13,10 +13,10 @@ all() ->
 groups() ->
 	[{basic, [],
 		[ hello_world_test
+		, massive_syntax_test
 		, type_error_test
 		, header_creation_test
 		, comment_test
-		, map_syntax_test
 		]}
 	].
 
@@ -26,11 +26,25 @@ hello_world_test(Cfg) ->
 	PrivDir = proplists:get_value(priv_dir, Cfg),
 	{ok, Tokens} = milang_parse:file(filename:join([DataDir, "HelloWorld.milang"])),
 	{ok, AST} = milang_lex:as_module(Tokens),
+	ct:pal("The ast: ~p~n", [AST]),
 	OutputFile = filename:join([PrivDir, "HelloWorld"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
 	ok = milang_compile:compile(AST, [{input_file_name, "HelloWorld.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
 	Result = os:cmd(OutputFile),
 	?assertEqual("Hello, World!\n", Result).
+
+massive_syntax_test(Cfg) ->
+	milang_log:set_log_level(debug),
+	DataDir = proplists:get_value(data_dir, Cfg),
+	PrivDir = proplists:get_value(priv_dir, Cfg),
+	{ok, Tokens} = milang_parse:file(filename:join([DataDir, "MassiveSyntaxTest.milang"])),
+	{ok, AST} = milang_lex:as_module(Tokens),
+	OutputFile = filename:join([PrivDir, "MassiveSyntaxTest"]),
+	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
+	ok = milang_compile:compile(AST, [{input_file_name, "MassiveSyntaxTest.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
+	Result = os:cmd(OutputFile),
+	?assertEqual("0\n", Result).
+
 
 type_error_test(Cfg) ->
 	milang_log:set_log_level(debug),
@@ -126,8 +140,8 @@ find_first_difference(Got, Expected, [{map, {keys, [Key | KeyTail]}} | PathTail]
 			find_first_difference(GotValue, ExpectedValue, [type_check, {map, Key} | PathTail])
 	end.
 
-strip_text_artifacts(#milang_ast{} = Node) ->
-	Node#milang_ast{ doc = <<>>, location = {0,0}, data = strip_text_artifacts(Node#milang_ast.data) };
+strip_text_artifacts(Node) when element(1, Node) =:= milang_ast ->
+	milang_ast:ast_node({0,0}, <<>>, strip_text_artifacts(milang_ast:data(Node)));
 strip_text_artifacts(Data) when is_map(Data) ->
 	maps:map(fun(_K, V) ->
 		strip_text_artifacts(V)
@@ -152,17 +166,5 @@ comment_test(Cfg) ->
 	OutputFile = filename:join([PrivDir, "CommentTest"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
 	ok = milang_compile:compile(AST, [{input_file_name, "CommentTest.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
-	Result = os:cmd(OutputFile),
-	?assertEqual("", Result).
-
-map_syntax_test(Cfg) ->
-	milang_log:set_log_level(debug),
-	DataDir = proplists:get_value(data_dir, Cfg),
-	PrivDir = proplists:get_value(priv_dir, Cfg),
-	{ok, AST} = milang_parse:file(filename:join([DataDir, "MapTest.milang"])),
-
-	OutputFile = filename:join([PrivDir, "MapTest"]),
-	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
-	ok = milang_compile:compile(AST, [{input_file_name, "MapTest.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
 	Result = os:cmd(OutputFile),
 	?assertEqual("", Result).

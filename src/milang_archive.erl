@@ -8,6 +8,7 @@
 -export([add_bootstrap/2]).
 
 -include_lib("kernel/include/file.hrl").
+-include_lib("kernel/include/logger.hrl").
 
 -type option()
 	:: {erl_src_dir, filename:filename()}
@@ -19,23 +20,24 @@
 -spec build(file:filename(), [ option() ]) -> ok.
 build(OutputFile, Options) ->
 	ErlSrcDir = proplists:get_value(erl_src_dir, Options, "./milang-work-dir/src_erl"),
-	ok = io:format("Erlang Source Dir: ~p~n", [ErlSrcDir]),
+	ok = ?LOG_DEBUG("Erlang Source Dir: ~p~n", [ErlSrcDir]),
 	ok = make_dir_or_die(ErlSrcDir),
 	BeamDir = proplists:get_value(beam_dir, Options, "./milang-work-dir/ebin"),
-	ok = io:format("Beam Repository: ~p~n", [BeamDir]),
+	ok = ?LOG_DEBUG("Beam Repository: ~p~n", [BeamDir]),
 	ok = make_dir_or_die(BeamDir),
 	MainFile = case proplists:get_value(main_file, Options) of
 		undefined ->
 			main_module_from_output_file(OutputFile);
-		AnAtom ->
-			AnAtom
+		AtomOrBinary ->
+			clean_module_name(AtomOrBinary)
 	end,
-	ok = io:format("Main file: ~s~n", [MainFile]),
+	ok = ?LOG_DEBUG("Main file: ~s~n", [MainFile]),
 	BootstrapPart = add_bootstrap(MainFile, ErlSrcDir),
-	ok = io:format("bootstrap built.~n"),
+	ok = ?LOG_DEBUG("bootstrap built.~n"),
 	Curry = code:get_object_code(milang_curry),
-	SupportModules = proplists:get_value(support_modules, Options, []),
-	io:format("Support Modules: ~p~n", [SupportModules]),
+	SupportModulesDirty = proplists:get_value(support_modules, Options, []),
+	SupportModules = [clean_module_name(S) || S <- SupportModulesDirty ],
+	?LOG_DEBUG("Support Modules: ~p~n", [SupportModules]),
 	true = code:add_path(BeamDir),
 	RestOfZip = lists:map(fun(ModuleName) ->
 		build_beam(ModuleName, ErlSrcDir, BeamDir)
@@ -44,6 +46,11 @@ build(OutputFile, Options) ->
 	{ok, Bytes} = escript:create(binary, [shebang, comment, {emu_args, "-escript main milang_bootstrap"}, {archive, Zippable, [memory]}]),
 	ok = file:write_file(OutputFile, Bytes),
 	ok = ensure_file_executable(OutputFile).
+
+clean_module_name(A) when is_atom(A) ->
+	A;
+clean_module_name(S) when is_binary(S) ->
+	binary_to_atom(S, utf8).
 
 make_dir_or_die(Dir) ->
 	case file:make_dir(Dir) of
@@ -66,9 +73,9 @@ main_module_from_output_file(OutputFile) ->
 
 add_bootstrap(MainModule, WorkDir) ->
 	BootstrapFile = unicode:characters_to_list(filename:join([WorkDir, "milang_bootstrap.erl"])),
-	ok = io:format("BootstrapFile: ~s~n", [BootstrapFile]),
+	ok = ?LOG_DEBUG("BootstrapFile: ~s~n", [BootstrapFile]),
 	ok = file:write_file(BootstrapFile, boostrap_module_src()),
-	ok = io:format("MainModule: ~s~n", [MainModule]),
+	ok = ?LOG_DEBUG("MainModule: ~p~n", [MainModule]),
 	{ok, _, Beam} = compile:noenv_file(BootstrapFile, [binary, debug_info, {d, 'MILANG_BOOT_MODULE', MainModule}]),
 	{"milang_bootstrap.beam", Beam}.
 
@@ -93,7 +100,7 @@ build_beam(ModuleName, ErlSrc, BeamDir) ->
 	SrcPath = filename:join(ErlSrc, ErlBaseName),
 	MaybeBeamFile = beam_file(MaybeObjectCode, ModuleName),
 	RebuiltBeam = rebuild_beam_if_needed(SrcPath, MaybeBeamFile, MaybeObjectCode, BeamDir, ModuleName),
-	io:format("Module hunt for ~s:~n"
+	?LOG_DEBUG("Module hunt for ~s:~n"
 		"	Erl File: ~s~n"
 		"	beam file ~p~n"
 		"	rebuilt: ~p~n"

@@ -1,14 +1,14 @@
 
--type Core.String.
+type Core.String.
 
--type Core.Integer.
+type Core.Integer.
 
--type Core.Unit.
+type Core.Unit.
 
--type Core.Never [, Core.RecurseForever Core.Never].
+type Core.Never = [, Core.RecurseForever Core.Never].
 
--type Core.List a [, Core.Cons a ( Core.List a) , Core.Nil].
+type Core.List a = [, Core.Cons a ( Core.List a) , Core.Nil].
 
-Core.'|' : a -> (a -> b) -> b.
+spec Core.| = a -> (a -> b) -> b.
 
-Core.always : a -> (_ -> a).
+spec Core.always = a -> (_ -> a).

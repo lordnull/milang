@@ -1,8 +1,11 @@
--module HelloWorld exposing [, main ] .
+module HelloWorld.
 
--import System.Print exposing [, ln ].
+import System.Print.
 
-main : List String -> Integer.
-main _ ->
+let ln = System.Print.ln.
+
+expose spec main = List String -> Integer.
+let main = function _ ->
 	ln "Hello, World!"
-	| always 0.
+	'| always 0.
+.

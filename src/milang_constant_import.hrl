@@ -1,13 +1,11 @@
 -ifndef(DEFAULT_IMPORTS).
 -define(DEFAULT_IMPORTS,
-<<"-import Core exposing [
-	,Integer
-	,String
-	,Unit
-	,Never
-	,List
-	,'|'
-	,always
-	].
-">>).
+"import Core.\n"
+"alias Integer = Core.Integer.\n"
+"alias String = Core.String.\n"
+"alias Unit = Core.Unit.\n"
+"alias Never = Core.Never.\n"
+"let | = Core.|.\n"
+"let always = Core.always.\n"
+"\n").
 -endif.

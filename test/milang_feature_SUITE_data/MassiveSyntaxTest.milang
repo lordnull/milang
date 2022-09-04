@@ -1,0 +1,73 @@
+module MassiveSyntaxTest.
+
+import System.Print.
+
+let ln = System.Print.ln.
+
+expose spec main [] List String -> Integer.
+let main = function _ ->
+	let fail_count = run_tests.
+	String.fromInt fail_count
+	| ln
+	| always fail_count.
+
+let run_tests = function ->
+	let tests = [
+		, literal_string
+		, literal_integer
+		, literal_float
+		, literal_record
+		, basic_addition
+		].
+	run_next_test tests 0.
+
+let run_next_test = function tests failure_count ->
+	match tests with
+		[] ->
+			failure_count.
+		[ test | tail ] ->
+			match test with
+				Nothing ->
+					run_next_test tail falure_count.
+				Just _ ->
+					run_next_test tail (failure_count + 1).
+			.
+	..
+
+let literal_string = function ->
+	let hi = "hi".
+	ln ("the hi was " ++ hi)
+	| always Nothing.
+
+let literal_integer = function ->
+	let two = 2.
+	ln ("the two was " ++ (String.fromInt two))
+	| always Nothing.
+
+let literal_float = function ->
+	let seven_tenths = 0.7.
+	ln ("the float was " ++ (String.fromFloat seven_tenths))
+	| always Nothing.
+
+let literal_record = function ->
+	let record1 = { a = 1, b = "candy" }.
+	let {a = the_a} = record1.
+	let record2 = { record1 | a = the_a + 1 }.
+	ln ("b field was " ++ (.b record2) ++ " and a field was " ++ (.a record2 | String.fromInt ))
+	| always Nothing.
+
+let basic_addition = function ->
+	let added_ints = 3 + 7.
+	let added_floats = 4.3 + 8.7.
+	let result_rec = { ints = added_ints, floats = added_floats }.
+	match result_rec with
+		{ ints = 10, floats = 13.0 } ->
+			ln "it all adds up".
+		_ ->
+			ln ("ints should have been 10 but was " ++ (String.fromInt (.ints result_rec)) ++ " and floats should have been 13.0 but was " ++ (String.fromFloat (.floats result_rec))).
+	.
+	| always Nothing.
+
+expose spec sum when [, a math.number] = list.list a -> a.
+let sum = function numbers ->
+	list.foldl + 0 numbers.

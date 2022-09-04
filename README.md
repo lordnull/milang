@@ -377,4 +377,107 @@ Because I'm lazy.
 
 Is a work in progress. What was here was wrong by the time it got pushed.
 
+# Thoughts and other things.
+
+So one of the things that's bothersome about elm is that binding is inside an `let` block. This means we need to choose either between having the block, or twisting around the fact that we don't have a way to re-use a computation essentially. So I want to be able to naturally use binding. However, this brings up a couple of issues.
+
+First is anonymous functions, or rather binding a function at all. I want exactly 1 syntax for functions. I need to be able to tell when a function is going to be declared, what the arguments to the function are, when the body starts, what bindings are within the body, and finally what the returning expression is.
+
+All languages use a sigil of some kind to start a function declaration and sperate the args list.
+
+```elm
+--the '\' is the 'start function' sigil.
+--the '->' is the 'end of args, start of body' sigil.
+let f = \x -> do 5 x
+-- the end of the function is implied by indentation, or a closing parens when wrapped.
+```
+
+```erlang
+% 'fun' is the start of function sigil.
+% the arguments list is surrounded by parens.
+% the '->' isn't really needed since we already know the arguments list is done.
+F = fun(A) -> do(5, A) end.
+% the 'end' sigil closes it all up. No need for extra parens, and the internal body of the function matches top level functions.
+```
+
+So, the following constraints:
+* creating a top level and anonymous function has the same syntax.
+* minimize the need for keywords and extra symbols.
+* whitespace is _not_ the block indicator.
+
+```milang
+let some_name = func arg1 arg2 ->
+	let some_bind = func q ->
+		do 5 arg1 q.
+	List.map some_bind arg2.
+```
+
+I was thinking it might be ugly to have a run of dots ending something, but is that any worse that a run of parens or other collection closers?
+
+So yea, you declare a function using `func args -> body .`.
+
+# Keywords
+
+Most keywords are context sensitive. For example, `let module = goober.` is valid. If you realy want to be evil, `let let = goober` is also valid. This is because at the top level, everything is a declaration, and a declaration never starts without a keyword.
+
+Something that won't work is `let func = goober`. This is because it would then break `let f = func a`. We're not going to say "oh, must be a function call" in this case since it is now ambiguous whether you mean to create a function or call `func`.
+
+* let : create a binding or type declaration.
+* expose : make the identifier public. This allows a function to be imported from the module, and allows a type to be imported and used for type declarations.
+* expose-all : make the type and it's constructors public. This allows the type to be pattern matched and the constructors to be called directly.
+* module : declare the module's name.
+* import : bring a module in for lookups.
+* func : start a function construction.
+* data : create a type and possible constructors.
+* class : create a class
+* implement : extend a 'data' type to conform to a 'class'.
+* '=' : declare a value binding.
+* ':' : declare a type binding.
+* '‡' : declare a class restriction.
+* '->' : declare a return or result, either as a function or within a type declaration
+
+# AST
+
+module = ws? (declaration ws?)*
+
+declaration =
+	( decl_module
+	| decl_import
+	| decl_let
+	| decl_expose
+	| decl_expose_all
+	)
+
+decl_module =
+	"module" ws module_name ws? "."
+
+decl_import =
+	"import" ws module_name (ws "as" ws module_name ws)? ("exposing" ws? exposing_list) ) ws? "."
+
+exposing_list =
+	"[" (ws? "," ws? identifier)* ws? "]"
+
+identifier =
+	([\w]+ | [\pS\pL]+)
+
+decl_let =
+	"let" ws identifier ws ( ":" ws? type_spec | "=" ws? expression ) ws? "."
+
+decl_expose =
+	"expose" ws identifier ws? "."
+
+decl_expose_all =
+	"expose-all" ws identifier ws? "."
+
+type_spec =
+
+ws =
+	( comment
+	, spaces
+	)
+
+comment =
+	"{-" .* "-}"
+
+spaces = [\s]+
 
