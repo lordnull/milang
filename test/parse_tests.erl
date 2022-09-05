@@ -52,6 +52,7 @@ chomp_test_() ->
 		Result = parse:it(Subject, Parser),
 		?assertMatch({ok, ExpectedChomp, <<"a">>}, Result)
 	end
+	, ?_assertMatch({ok, <<"abc">>, <<"defg">>}, parse:it(<<"abcdefg">>, parse:chomp_until(<<"de">>)))
 	].
 
 peek_test_() ->

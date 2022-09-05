@@ -9,3 +9,4 @@ expose spec main = {- The list of arguments passed in on the command line. -} Li
 let main = function _ ->
 	{- never fails! -}
 	0.
+.

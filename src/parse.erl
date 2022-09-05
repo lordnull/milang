@@ -634,7 +634,7 @@ chomp_until(TestString) ->
 		{push, 0, chomp_until_implementation(TestString), undefined, fun chomp_until_acc/3, {TestString, []}}
 	end.
 
-chomp_until_acc({error, string_found}, _, {_, Acc}) ->
+chomp_until_acc({error, #{ reason := string_found}}, _, {_, Acc}) ->
 	combine_chomped(Acc);
 chomp_until_acc({ok, C, _} = Ok, _, {TestString, Acc}) ->
 	{next, C, chomp_until_implementation(TestString), {TestString, [Ok | Acc]}};

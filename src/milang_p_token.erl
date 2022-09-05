@@ -205,8 +205,8 @@ whitespace() ->
 -spec comment() -> parse:parser(term(), comment()).
 comment() ->
 	Repeat = parse:chomp_until(<<" -}">>),
-	Series = parse:series([parse:string(<<"{- ">>), Repeat]),
-	Mapper = fun([_, {Doc, _}]) ->
+	Series = parse:series([parse:string(<<"{- ">>), Repeat, parse:string(<<" -}">>)]),
+	Mapper = fun([_, Doc, _]) ->
 		unicode:characters_to_binary(Doc)
 	end,
 	Mapped = parse:map(Series, Mapper),
