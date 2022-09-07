@@ -3,8 +3,6 @@
 -export(
 	[ new/0
 	, validate_list/2
-	, resolve_name/2
-	, resolve_type/2
 	]).
 
 -include("milang_ast.hrl").
@@ -113,7 +111,9 @@
 }).
 -type alias() :: #tv_alias{}.
 
--type entry() :: concrete() | data() | constructor() | alias() | placeholder.
+-type placeholder() :: {placeholder, mi_identifier()}.
+
+-type entry() :: concrete() | data() | constructor() | alias() | placeholder().
 
 -type lookup_table() :: nonempty_list( #{ mi_identifier() => entry()} ).
 
@@ -130,7 +130,8 @@ validate_list(Nodes, Table) ->
 
 -spec validate_node(milang_ast:ast_node(), lookup_table()) -> {ok, lookup_table()} | {error, term()}.
 validate_node(Node, Table) ->
-	Type = milang_ast:type(Node),
+	Type = milang_ast:type_simply(Node),
+	?LOG_DEBUG("validate node of type ~p (full node: ~p)", [Type, Node]),
 	validate_node(Type, Node, Table).
 
 validate_node(module, _Node, Table) ->
@@ -177,7 +178,7 @@ validate_node(type, Node, Table) ->
 				error({invalid_constraint, Key, Wut})
 		end
 	end, #{}, Constraints),
-	ArgNames = [ milang_ast:data(A) || A <- Args],
+	ArgNames = [ {placeholder, identifier(milang_ast:data(A))} || A <- Args],
 	TopType = #tv_data{ arg_names = ArgNames, constraints = ConstraintMap},
 	MidTable = set_entry(Name, TopType, Table),
 	ConstructorFoldFun = fun(ConstructorNode, TableAcc) ->
@@ -240,12 +241,17 @@ validate_node(type, Node, Table) ->
 
 validate_node(alias, Node, Table) ->
 	Data = milang_ast:data(Node),
-	Name = milang_ast_alias:name(Data),
+	NameNode = milang_ast_alias:name(Data),
 	Constraints = milang_ast_alias:constraints(Data),
-	Args = milang_ast_alias:args(Data),
-	Original = milang_ast_alias:original(Data),
-	Alias = #tv_alias{ arg_names = Args, constraints = Constraints, truename = Original },
-	add_entry(Name, Alias, Table);
+	ArgNodes = milang_ast_alias:args(Data),
+	Args = [{placeholder, identifier(N)} || N <- ArgNodes],
+	OriginalNode = milang_ast_alias:original(Data),
+	TypeRes = type_of_node(OriginalNode, Table),
+	'Result':and_then(fun(Original) ->
+		?LOG_DEBUG("the original: ~p", [Original]),
+		Alias = #tv_alias{ arg_names = Args, constraints = Constraints, truename = Original },
+		add_entry(identifier(NameNode), Alias, Table)
+	end, TypeRes);
 
 validate_node(binding, Node, Table) ->
 	Data = milang_ast:data(Node),
@@ -256,26 +262,40 @@ validate_node(_, Node, Table) ->
 	{error, {cannot_validate_non_declarations, Node, Table}}.
 
 validate_binding(Binding, Table) ->
-	Match = milang_binding:match(Binding),
-	Expression = milang_binding:expression(Binding),
+	MatchNode = milang_ast_binding:match(Binding),
+	Expression = milang_ast_binding:expression(Binding),
 	MaybeExpressionType = type_of_node(Expression, Table),
-	validate_binding(Match, MaybeExpressionType, Table).
+	MatchData = milang_ast:data(MatchNode),
+	MaybeExisting = lookup(identifier(MatchData), Table),
+	validate_binding(MatchData, MaybeExpressionType, MaybeExisting, Table).
 
-validate_binding(_, {error, _} = Error, _) ->
+validate_binding(_, {error, _} = Error, _, _) ->
 	Error;
-validate_binding({identifier_bound, Name}, {ok, Type}, Table) ->
-	add_entry(Name, Type, Table);
-validate_binding({identifier_ignored, _}, _, Table) ->
+validate_binding({identifier_bound, _Name}, {ok, Type}, {ok, ExistingType}, Table) ->
+	case check_type_match(Type, ExistingType, Table) of
+		{ok, NewTable} ->
+			{ok, NewTable};
+		Error ->
+			Error
+	end;
+validate_binding({identifier_bound, Name}, {ok, Type}, _NotFound, Table) ->
+	add_entry(identifier(Name), Type, Table);
+validate_binding({identifier_ignored, _}, _AnyType, _NeverFound, Table) ->
 	{ok, Table};
-validate_binding(Match, {ok, Type}, _Table) ->
-	{error, {nyi, validate_binding, Match, Type}}.
+validate_binding(Match, {ok, Type}, _NoMatter, _Table) ->
+	{error, {validate_binding, bad_match_node, Match, Type}}.
 
 validate_spec(Data, Table) ->
-	Name = milang_spec:name(Data),
-	Spec = milang_spec:type(Data),
+	Name = milang_ast_spec:name(Data),
+	Spec = case milang_ast_spec:type(Data) of
+		{ok, T} -> T;
+		U -> U
+	end,
+	?LOG_DEBUG("Spec: ~p", [Spec]),
 	ResultSpecType = type_of_node(Spec, Table),
+	?LOG_DEBUG("ResultSpecType: ~p", [ResultSpecType]),
 	ResultAddEntry = 'Result':and_then(fun(Type) ->
-		add_entry(Name, Type, Table)
+		add_entry(identifier(Name), Type, Table)
 	end, ResultSpecType),
 	Out = ResultAddEntry,
 	?LOG_INFO("validating a declaration spec: ~p~n"
@@ -317,10 +337,10 @@ validate_spec(Data, Table) ->
 %			Error
 %	end.
 
--spec check_type_match(concrete(), concrete() | placeholder, lookup_table()) -> {ok, lookup_table()} | {error, term()}.
-check_type_match(_Known, placeholder, Table) ->
+-spec check_type_match(concrete(), concrete() | placeholder(), lookup_table()) -> {ok, lookup_table()} | {error, term()}.
+check_type_match(_Known, {placeholder, _}, Table) ->
 	{ok, Table};
-check_type_match(placeholder, _Known, Table) ->
+check_type_match({placeholder, _}, _Known, Table) ->
 	{ok, Table};
 check_type_match(#tv_concrete{ concrete_of = OfA} = Known, #tv_concrete{ concrete_of = OfB} = Inferred, Table)
 		when OfA =:= OfB; OfA =:= undefined; OfB =:= undefined ->
@@ -417,11 +437,14 @@ update_type_variable(_TypeVariable, _Replacement, Term) ->
 
 -spec type_of_node(milang_ast:ast_node(), lookup_table()) -> {ok, concrete() | mi_identifier()} | {error, term()}.
 type_of_node(Node, Table) ->
-	Type = milang_ast:type(Node),
-	type_of_node(Type, Node, Table).
+	?LOG_DEBUG("type of node ~p", [Node]),
+	Type = milang_ast:type_simply(Node),
+	Out = type_of_node(Type, Node, Table),
+	?LOG_DEBUG("And the type is ~p", [Out]),
+	Out.
 
 type_of_node(signature, Node, Table) ->
-	?LOG_DEBUG("type of node:~n    Node: ~p", [Node]),
+	%?LOG_DEBUG("type of node:~n    Node: ~p", [Node]),
 	ArgNodes = milang_ast_signature:args(milang_ast:data(Node)),
 	ResultArgTypes = 'Result':map_list(fun(N) ->
 		type_of_node(N, Table)
@@ -429,16 +452,27 @@ type_of_node(signature, Node, Table) ->
 	'Result':map(fun(ArgTypes) -> #tv_function{ args = ArgTypes } end, ResultArgTypes);
 
 type_of_node(concrete, Node, Table) ->
-	?LOG_DEBUG("type of node:~n    Node: ~p~n", [Node]),
+	%?LOG_DEBUG("type of node:~n    Node: ~p~n", [Node]),
 	Data = milang_ast:data(Node),
-	Name = milang_ast_concrete:name(Data),
+	NameNode = milang_ast_concrete:name(Data),
+	Name = identifier(NameNode),
 	Args = milang_ast_concrete:args(Data),
 	ResultArgTypes = 'Result':map_list(fun(N) ->
 		type_of_node(N, Table)
 	end, Args),
-	ResultLookupName = resolve_name(Name, Table),
-	'Result':and_then_n([ResultArgTypes, ResultLookupName], fun(ArgTypes, ResolvedName) ->
-		{ok, #tv_concrete{ concrete_of = ResolvedName, args = ArgTypes }}
+	% a concrete can be for either an alias or a data (type). To make type checks
+	% easier going forward, if we get an alias, we merge the concrete the alias
+	% uses with the one we got, and check them.
+	% a rough-cut of it. Its up to the validator or type check part to actually
+	% figure out the type proper.
+	ResultLookup = lookup(Name, Table),
+	'Result':and_then_n([ResultArgTypes, ResultLookup], fun(ArgTypes, Resolved) ->
+		case Resolved of
+			#tv_alias{} ->
+				{ok, alias_as_concrete(Resolved, ArgTypes)};
+			#tv_data{} ->
+				{ok, #tv_concrete{ concrete_of = Name, args = ArgTypes}}
+		end
 	end);
 
 type_of_node(identifier_ignored, _, _Table) ->
@@ -449,7 +483,9 @@ type_of_node(identifier_ignored, _, _Table) ->
 %	{ok, {type_variable, Name}};
 type_of_node(identifier_type, Node, Table) ->
 	{identifier_type, Name} = milang_ast:data(Node),
-	case resolve_type(Name, Table) of
+	case lookup(Name, Table) of
+		{ok, #tv_alias{} = Alias} ->
+			{ok, alias_as_concrete(Alias, [])};
 		{ok, _} = Ok -> Ok;
 		NotOk -> NotOk
 	end;
@@ -467,10 +503,10 @@ type_of_node(identifier_type, Node, Table) ->
 type_of_node(identifier_bound, Node, Table) ->
 	% this is a less formal identifier, likely an type variable. Still,
 	% everything from above still applies.
-	{identifier_bound, Name} = milang_ast:data(Node),
-	case resolve_type(Name, Table) of
+	Id = identifier(milang_ast:data(Node)),
+	case lookup(Id, Table) of
 		{ok, _} = OK -> OK;
-		_NotOk -> {ok, placeholder}
+		_NotOk -> {ok, {placeholder, Id}}
 	end;
 %type_of_node(identifier_bound, Node, Table) ->
 %	{identifier_bound, Name} = milang_ast:data(Node),
@@ -511,28 +547,28 @@ type_of_node(call, Node, Table) ->
 		type_of_node(N, Table)
 	end, Args),
 	ResultLong = 'Result':map(fun(ArgTypes) ->
-		#tv_concrete{ concrete_of = Name, args = ArgTypes }
+		#tv_function{ args = ArgTypes }
 	end, ResultArgTypes),
-	ResultExistingAtAll = resolve_type(Name, Table),
+	ResultExistingAtAll = lookup(Name, Table),
 	ResultExisting = 'Result':and_then(fun
 		(#tv_function{} = A) ->
 			{ok, A};
-		(_) ->
-			{error, not_a_function}
+		(Actual) ->
+			{error, {not_a_function, Actual}}
 	end, ResultExistingAtAll),
 	ResultTypeCheck = 'Result':and_then_n([ResultExisting, ResultLong], fun(Known, Inferred) ->
 		check_type_match(Known, Inferred, Table)
 	end),
 	ResultChoppedArgs = 'Result':map_n([ResultTypeCheck, ResultExisting, ResultLong], fun(_, Known, Inferred) ->
-		{_, NewArgs} = lists:split(length(Inferred#tv_concrete.args), Known#tv_function.args),
-		Inferred#tv_concrete{ args = NewArgs }
+		{_, NewArgs} = lists:split(length(Inferred#tv_function.args), Known#tv_function.args),
+		Inferred#tv_function{ args = NewArgs }
 	end),
-	'Result':map(fun(Concrete) ->
-		case Concrete#tv_concrete.args of
+	'Result':map(fun(MinimalFunction) ->
+		case MinimalFunction#tv_function.args of
 			[Singleton] ->
 				Singleton;
 			_ ->
-				Concrete
+				MinimalFunction
 		end
 	end, ResultChoppedArgs);
 type_of_node(literal_string, _Node, _Table) ->
@@ -541,6 +577,87 @@ type_of_node(literal_float, _Node, _Table) ->
 	{ok, float_type()};
 type_of_node(literal_integer, _Node, _Table) ->
 	{ok, integer_type()};
+
+type_of_node(function, Node, BaseTable) ->
+	Table = [#{} | BaseTable],
+	Data = milang_ast:data(Node),
+
+	% the args are serving 2 functions here.
+	% each arg will (eventually) map to a type, so a simple arg is a name
+	% placeholder. However, an arg could also be a pattern match of a record.
+	% this means it also provides some type hints, and has _multiple_ name
+	% placeholders. We haven't really touched on records yet, so I think I
+	% can skip that for now.
+	% TODO get arg -> type mapping, and then load that into the type table.
+	ArgNodes = milang_ast_function:args(Data),
+	MaybeArgsListReversed = lists:foldl(fun(ArgNode, Acc) ->
+		TypeRes = 'Result':and_then(fun(_) ->
+			type_of_node(ArgNode, Table)
+		end, Acc),
+		'Result':and_then_n([Acc, TypeRes], fun(L, T) ->
+			{ok, [{ArgNode, T} | L]}
+		end)
+	end, {ok, []}, ArgNodes),
+	MaybeArgsList = 'Result':map(fun lists:reverse/1, MaybeArgsListReversed),
+	AddNode = fun(ArgNode, Type, OldTable) ->
+		Id = identifier(ArgNode),
+		add_entry(Id, Type, OldTable)
+	end,
+	AddNodes = fun(ArgList) ->
+		lists:foldl(fun({ArgNode, Type}, TableRes) ->
+			'Result':and_then(fun(OldTable) ->
+				AddNode(ArgNode, Type, OldTable)
+			end, TableRes)
+		end, {ok, Table}, ArgList)
+	end,
+	MaybeTableWithArgs = 'Result':and_then(fun(ArgList) ->
+		AddNodes(ArgList)
+	end, MaybeArgsList),
+
+	BindNodes = milang_ast_function:binds(Data),
+	MaybeTableWithBinds = lists:foldl(fun(BindNode, Acc) ->
+		BindData = milang_ast:data(BindNode),
+		MatchNode = milang_ast_binding:match(BindData),
+		ExprNode = milang_ast_binding:expression(BindData),
+		TypeRes = 'Result':and_then(fun(T) ->
+			type_of_node(ExprNode, T)
+		end, Acc),
+		'Result':and_then_n([TypeRes, Acc], fun(Type, AccTable) ->
+			Id = identifier(MatchNode),
+			add_entry(Id, Type, AccTable)
+		end)
+	end, MaybeTableWithArgs, BindNodes),
+
+	ExprNode = milang_ast_function:expression(Data),
+	ExprRes = 'Result':and_then(fun(TableAcc) ->
+		type_of_node(ExprNode, TableAcc)
+	end, MaybeTableWithBinds),
+	'Result':map_n([MaybeArgsListReversed, ExprRes], fun(Args, Res) ->
+		ArgTypes = lists:map(fun({Id, T}) ->
+			case T of
+				{placeholder, _} -> Id;
+				_ -> T
+			end
+		end, Args),
+		FullType = [Res | ArgTypes],
+		#tv_function{ args = lists:reverse(FullType)}
+	end);
+
+type_of_node(infix_tree, Node, Table) ->
+	Data = milang_ast:data(Node),
+	Notation = milang_ast_infix_tree:notation(Data),
+	LeftNode = milang_ast_infix_tree:left(Data),
+	RightNode = milang_ast_infix_tree:right(Data),
+
+	Function = milang_ast_infix_notation:function(Notation),
+	Args = [LeftNode, RightNode],
+	CallNode = milang_ast:transform_data(fun(_) ->
+		milang_ast_call:new({identifier_bound, Function}, Args)
+	end, Node),
+	type_of_node(call, CallNode, Table);
+
+
+
 %type_of_node(#milang_ast{ data = {name_upcase, Name}}, _Table) ->
 %	% TODO double-check the below.
 %	% if we're here, we're not just looking at some binding, we're trying
@@ -616,13 +733,43 @@ type_of_node(_, Node, Table) ->
 	{error, {unable_to_determine_type_from_node, Node, Table}}.
 
 string_type() ->
-	#tv_concrete{ concrete_of = #{ module => 'Core', local => 'String' } }.
+	#tv_concrete{ concrete_of = #{ module => <<"Core">>, local => <<"String">> } }.
 
 integer_type() ->
-	#tv_concrete{ concrete_of = #{ module => 'Core', local => 'Integer' } }.
+	#tv_concrete{ concrete_of = #{ module => <<"Core">>, local => <<"Integer">> } }.
 
 float_type() ->
-	#tv_concrete{ concrete_of = #{ module => 'Core', local => 'Float' } }.
+	#tv_concrete{ concrete_of = #{ module => <<"Core">>, local => <<"Float">> } }.
+
+alias_as_concrete(Alias, ArgTypes) ->
+	?LOG_DEBUG("Converting alias ~p with types ~p", [Alias, ArgTypes]),
+	ArgNames = Alias#tv_alias.arg_names,
+	Original = Alias#tv_alias.truename,
+	NameToType = maps:from_list(lists:zip(ArgNames, ArgTypes)),
+	ConcreteArgs = Original#tv_concrete.args,
+	FixedArgs = lists:map(fun
+		({placeholder, _} = N) ->
+			case maps:find(N, NameToType) of
+				{ok, T} ->
+					T;
+				error ->
+					N
+			end;
+		(E) ->
+			E
+	end, ConcreteArgs),
+	Original#tv_concrete{ args = FixedArgs }.
+
+identifier(Name) when is_binary(Name) ->
+	Name;
+identifier(Name) when is_map(Name) ->
+	Name;
+identifier({_, Name}) ->
+	identifier(Name);
+identifier(Name) when is_list(Name) ->
+	unicode:characters_to_binary(Name);
+identifier(Node) ->
+	identifier(milang_ast:data(Node)).
 
 -spec add_entry(mi_identifier(), entry(), lookup_table()) -> {ok, lookup_table()} | {error, {shadowing, entry()}}.
 add_entry(Name, Entry, Table) ->
@@ -631,7 +778,10 @@ add_entry(Name, Entry, Table) ->
 			NewTable = set_entry(Name, Entry, Table),
 			{ok, NewTable};
 		{ok, Entry} ->
-			{error, {shadowing, Entry}}
+			% meh, it's an exact match so we're all good.
+			{ok, Table};
+		{ok, ExistingEntry} ->
+			{error, {shadowing, Name, ExistingEntry}}
 	end.
 
 -spec set_entry(mi_identifier(), entry(), lookup_table()) -> lookup_table().
@@ -652,26 +802,3 @@ lookup(Name, [Table | Tail]) ->
 			Ok
 	end.
 
-
--spec resolve_type(mi_identifier(), lookup_table()) -> {ok, placeholder | concrete() | data() | constructor()} | {error, notfound}.
-resolve_type(Name, Table) ->
-	case lookup(Name, Table) of
-		{ok, #tv_alias{} = A} ->
-			resolve_type(A#tv_alias.truename, Table);
-		ErrOrNotAlias ->
-			ErrOrNotAlias
-	end.
-
--spec resolve_name(mi_identifier(), lookup_table()) -> {ok, mi_identifier()} | {error, notfound}.
-resolve_name(Name, Table) ->
-	?LOG_DEBUG("looking for ~p, ", [Name]),
-	case lookup(Name, Table) of
-		{ok, #tv_alias{} = A} ->
-			resolve_name(A#tv_alias.truename, Table);
-		{ok, _NotAlias} ->
-			?LOG_DEBUG("and found!~n", []),
-			{ok, Name};
-		Error ->
-			?LOG_INFO("Did not find ~p.", [Name]),
-			Error
-	end.

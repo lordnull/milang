@@ -18,7 +18,7 @@
 	, set_doc/2, pre_doc/2, add_doc/2, doc/1
 	, set_data/2, transform_data/2, data/1
 	, location/1
-	, type/1
+	, type/1, type_simply/1
 	]).
 
 -type ast_node(T) :: #milang_ast{ data :: T }.
@@ -33,6 +33,12 @@ type(#milang_ast{ data = D}) when is_atom(element(1, D)) ->
 	{ok, element(1, D)};
 type(_) ->
 	undefined.
+
+type_simply(N) ->
+	case type(N) of
+		{ok, T} -> T;
+		U -> U
+	end.
 
 ast_node(Location, Docs) ->
 	ast_node(Location, Docs, undefined).

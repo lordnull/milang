@@ -308,7 +308,7 @@ declaration_alias({args_when_or_equal, NameNode, ArgsAcc}, ProtoNode, Tokens, Op
 		{_, [{syntax_keyword, L, 'when'} | Tail]} ->
 			ConstraintNode = milang_ast:ast_node(L, Comments),
 			declaration_alias({constraints, ConstraintNode, NameNode, ArgsAcc}, ProtoNode, Tail, Options);
-		{_, [{identifier, L, Data} | Tail]} ->
+		{_, [{identifier_bound, L, Data} | Tail]} ->
 			ArgNode = milang_ast:ast_node(L, Comments, {identifier, Data}),
 			declaration_alias({args_when_or_equal, NameNode, [ ArgNode | ArgsAcc]}, ProtoNode, Tail, Options);
 		{_, [{syntax_bind, _L, _} | Tail]} ->
@@ -346,7 +346,7 @@ declaration_alias({original, OriginalProtoNode, Constraints, Name, Args}, ProtoN
 	case type(OriginalProtoNode, Tokens, Options) of
 		{ok, Node, NewTokens} ->
 			AliasNode = milang_ast:transform_data(fun(_) ->
-				milang_ast_alias:new(Name, Constraints, Args, Node)
+				milang_ast_alias:new(Name, Args, Constraints, Node)
 			end, ProtoNode),
 			declaration_alias(finish, AliasNode, NewTokens, Options);
 		Error ->
