@@ -107,9 +107,9 @@
 
 as_series(Node) ->
 	case milang_ast:type(Node) of
-		infix_series ->
+		{ok, infix_series} ->
 			{ok, Node};
-		inifix_tree ->
+		{ok, inifix_tree} ->
 			{NewHead, Ops} = as_series(Node, new_branch, []),
 			Data = milang_ast_infix_series:new(NewHead, Ops),
 			milang_ast:transform_data(fun(_) -> Data end, Node)
@@ -216,7 +216,7 @@ reverse_oplist(Left, [OpNode | Tail], Acc) ->
 	Notation = milang_ast_infix_operation:notation(OpData),
 	Right = milang_ast_infix_operation:expression(OpData),
 	ReveresedOpData = milang_ast_infix_operation:new(Notation, Left),
-	ReversedOp = milang_ast:transform_data(fun(_) -> ReveresedOpData end, OpData),
+	ReversedOp = milang_ast:transform_data(fun(_) -> ReveresedOpData end, OpNode),
 	reverse_oplist(Right, Tail, [ ReversedOp | Acc]).
 
 split_fun(Weight) ->
@@ -234,7 +234,7 @@ as_series(Node, new_branch, Acc) ->
 	Right = milang_ast_infix_tree:right(Data),
 	Notation = milang_ast_infix_tree:notation(Data),
 	case milang_ast:type(Right) of
-		milang_ast_infix_tree ->
+		{ok, infix_tree} ->
 			{NewHead, NewAcc} = as_series(Right, new_branch, Acc),
 			NewOpData = milang_ast_infix_operation:new(Notation, NewHead),
 			NewOp = milang_ast:transform_data(fun(_) -> NewOpData end, Node),
@@ -249,7 +249,7 @@ as_series(Node, new_branch, Acc) ->
 
 as_series(Node, the_left_side, Acc) ->
 	case milang_ast:type(Node) of
-		milang_ast_infix_tree ->
+		{ok, infix_tree} ->
 			as_series(Node, new_branch, Acc);
 		_ ->
 			{Node, Acc}

@@ -224,7 +224,7 @@ extract_match({identifier_type, #{ module := M, local := L}}) ->
 extract_match({identifier_type, L}) ->
 	extract_match(unicode:characters_to_binary(["T_", L]));
 extract_match(Binary) when is_binary(Binary) ->
-	BadBoyFinder = re:compile("[^a-zA-Z0-9_]+", [unicode, ucp]),
+	{ok, BadBoyFinder} = re:compile("[^a-zA-Z0-9_]+", [unicode, ucp]),
 	FirstRun = re:run(Binary, BadBoyFinder, []),
 	mutilate_name(Binary, BadBoyFinder, FirstRun);
 extract_match(Node) ->
@@ -257,12 +257,12 @@ as_erlang(Node) ->
 	as_erlang(Node, module).
 
 as_erlang(Node, Scope) ->
-	Type = milang_ast:type(Node),
+	Type = milang_ast:type_simply(Node),
 	as_erlang(Type, milang_ast:data(Node), Scope).
 
 as_erlang(binding, Data, module) ->
 	MatchNode = milang_ast_binding:match(Data),
-	MatchType = milang_ast:type(MatchNode),
+	MatchType = milang_ast:type_simply(MatchNode),
 	case MatchType of
 		identifier_bound ->
 			module_function(milang_ast:data(MatchNode), milang_ast_binding:expression(Data));

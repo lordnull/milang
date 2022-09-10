@@ -13,7 +13,7 @@ all() ->
 groups() ->
 	[{basic, [],
 		[ hello_world_test
-		, massive_syntax_test
+		%, massive_syntax_test
 		, type_error_test
 		, header_creation_test
 		, comment_test

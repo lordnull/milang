@@ -28,6 +28,7 @@ it(_Ast, _Mode) ->
 % * unused args
 % * reused type names
 % * reused bind names
+% * non-exhaustive matches
 
 
 %it(AST, Mode) ->

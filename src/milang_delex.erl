@@ -132,6 +132,10 @@ maybe_parens(String, Node) ->
 			String
 	end.
 
+should_parens(type_concrete, _) ->
+	true;
+should_parens(signature, _) ->
+	true;
 should_parens(_, _) ->
 	false.
 

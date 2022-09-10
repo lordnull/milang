@@ -205,7 +205,7 @@ compile(ASTNode, Stack, CompileState) ->
 			% TODO impelment type checking
 			Data = milang_ast:data(ASTNode),
 			ExposeWhat = milang_ast_expose:declaration(Data),
-			ExposeWhatType = milang_ast:type(ExposeWhat),
+			ExposeWhatType = milang_ast:type_simply(ExposeWhat),
 			StateWithExports = maybe_add_to_exports(ExposeWhatType, ExposeWhat, CompileState),
 			NewState = type_validation(ExposeWhat, StateWithExports),
 			compile([], Stack, NewState);
@@ -239,7 +239,7 @@ maybe_add_to_exports(spec, Node, State) ->
 	Data = milang_ast:data(Node),
 	NameNode = milang_ast_spec:name(Data),
 	TypeNode = milang_ast_spec:type(Data),
-	TrueType = milang_ast:type(TypeNode),
+	TrueType = milang_ast:type_simply(TypeNode),
 	TypeData = milang_ast:data(TypeNode),
 	case TrueType of
 		signature ->
