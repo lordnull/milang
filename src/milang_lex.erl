@@ -91,8 +91,8 @@ root({expect_declaration, Comments}, [{keyword, L, expose} | Tokens], Options, A
 		Error ->
 			Error
 	end;
-root({expect_declaration, Comments}, [{keyword, L, expose_all} | Tokens], Options, Acc) ->
-	ProtoNode = milang_ast:ast_node(L, Comments, undefined),
+root({expect_declaration, Comments}, [{keyword, L, 'expose all'} | Tokens], Options, Acc) ->
+	ProtoNode = milang_ast:ast_node(L, Comments, milang_ast_type:new(undefined, [], [], [])),
 	case expose_all_declaration(ProtoNode, Tokens, Options) of
 		{ok, Declaration, NewTokens} ->
 			root(consume_whitespace, NewTokens, Options, [Declaration | Acc]);
@@ -167,7 +167,7 @@ expose_all_declaration(consume_whitespace, ProtoNode, Tokens, Options) ->
 expose_all_declaration(declaration, ProtoNode, [{keyword, _, 'type'} | Tokens], Options) ->
 	case declaration_type(ProtoNode, Tokens, Options) of
 		{ok, Declaration, NewTokens} ->
-			FinalNode = milang_ast:transform_data(fun(T) -> milang_type:exposed(all, T) end, Declaration),
+			FinalNode = milang_ast:transform_data(fun(_) -> milang_ast_expose:new(Declaration, expose_all) end, ProtoNode),
 			{ok, FinalNode, NewTokens};
 		Error ->
 			Error

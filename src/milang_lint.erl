@@ -20,6 +20,16 @@ it(_Ast, _Mode) ->
 	% TODO actually implement the linter.
 	[].
 
+% TODO
+% things to lint:
+% * module name matches file path
+% * unused types
+% * unused binds
+% * unused args
+% * reused type names
+% * reused bind names
+
+
 %it(AST, Mode) ->
 %	do_lint(AST, Mode, #state{}).
 %

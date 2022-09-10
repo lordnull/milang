@@ -2,8 +2,10 @@ type CreateHeader.Temp = [, CreateHeader.Blue , CreateHeader.Rare , CreateHeader
 
 type CreateHeader.Flavor = [, CreateHeader.Clean , CreateHeader.Spice , CreateHeader.Sweet , CreateHeader.Buttery , CreateHeader.Other Core.String].
 
-alias CreateHeader.Meal = { , temp = CreateHeader.Temp , flavor = CreateHeader.Flavor, cut = Steak.Cut }.
+type CreateHeader.Meal = [, CreateHeader.Nom CreateHeader.Temp CreateHeader.Flavor Steak.Cut].
+
+alias CreateHeader.Meals = List CreateHeader.Meal.
 
 spec CreateHeader.cook = Steak.Cut -> CreateHeader.Temp -> CreateHeader.Meal.
 
-spec CreateHeader.season = CreateHeader.Flavor -> CreateHeader.Meal -> CreateHeader.Meal.
+spec CreateHeader.season = CreateHeader.Flavor -> Steak.Cut -> CreateHeader.Meal.
