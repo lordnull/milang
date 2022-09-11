@@ -17,6 +17,8 @@ groups() ->
 		, type_error_test
 		, header_creation_test
 		, comment_test
+		%, record_test
+		, match_test
 		]}
 	].
 
@@ -82,6 +84,42 @@ header_creation_test(Cfg) ->
 	HeaderAST = strip_text_artifacts(HeaderASTWithDoc),
 	ExpectedAST = strip_text_artifacts(ExpectedASTWithDoc),
 	assert_equal_asts(HeaderAST, ExpectedAST).
+
+record_test(Cfg) ->
+	milang_log:set_log_level(debug),
+	DataDir = proplists:get_value(data_dir, Cfg),
+	PrivDir = proplists:get_value(priv_dir, Cfg),
+	{ok, Tokens} = milang_parse:file(filename:join([DataDir, "RecordTest.milang"])),
+	{ok, AST} = milang_lex:as_module(Tokens),
+	OutputFile = filename:join([PrivDir, "RecordTest"]),
+	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
+	ok = milang_compile:compile(AST, [{input_file_name, "RecordTest.milang"}, {output_file_name, OutputFile}, {work_dir, WorkDir}]),
+	Result = os:cmd(OutputFile),
+	case Result of
+		"" ->
+			ok;
+		_ ->
+			ct:pal("Errors: ~n~p", [Result]),
+			ct:fail(record_test_failure)
+	end.
+
+match_test(Cfg) ->
+	milang_log:set_log_level(debug),
+	DataDir = proplists:get_value(data_dir, Cfg),
+	PrivDir = proplists:get_value(priv_dir, Cfg),
+	{ok, Tokens} = milang_parse:file(filename:join([DataDir, "MatchTest.milang"])),
+	{ok, AST} = milang_lex:as_module(Tokens),
+	OutputFile = filename:join([PrivDir, "MatchTest"]),
+	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
+	ok = milang_compile:compile(AST, [{input_file_name, "MatchTest.milang"}, {output_file_name, OutputFile}, {work_dir, WorkDir}]),
+	Result = os:cmd(OutputFile),
+	case Result of
+		"" ->
+			ok;
+		_ ->
+			ct:pal("Errors: ~n~p", [Result]),
+			ct:fail(match_test_failure)
+	end.
 
 assert_equal_asts(AST, AST) ->
 	ok;

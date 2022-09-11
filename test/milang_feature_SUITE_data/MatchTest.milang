@@ -1,0 +1,95 @@
+module MatchTest.
+
+import System.Print.
+
+let ln = System.Print.ln.
+
+let literal_integer = function n ->
+	match n with
+		_ when n < 0 ->
+			"negative".
+		0 ->
+			"0".
+		_ ->
+			"positive".
+	..
+
+let literal_string = function s ->
+	match s with
+		"hello" ->
+			"greeting".
+		"bye" ->
+			"farewell".
+		_ ->
+			"whatever".
+	..
+
+let list_match = function l ->
+	match l with
+		[] ->
+			"empty".
+		_ :: [] ->
+			"one".
+		_ :: _ :: [] ->
+			"two".
+		_ :: _tail ->
+			"many".
+	..
+
+type Fork a b = [
+	, Left a
+	, Right b
+	].
+
+let type_match = function f ->
+	match f with
+		Left _ ->
+			"left".
+		Right _ ->
+			"right".
+	..
+
+let assert = function expectation expression ->
+	match expression with
+		expectation ->
+			Nothing.
+		_ ->
+			Just "mismatch".
+	..
+
+let assertions = function ->	[
+	, assert "negative" (literal_integer -5)
+	, assert "negative" (literal_integer -1)
+	, assert "0" (literal_integer 0)
+	, assert "positive" (literal_integer 10000000)
+	, assert "positive" (literal_integer 13)
+	, assert "greeting" (literal_string "hello")
+	, assert "farewell" (literal_string "bye")
+	, assert "whatever" (literal_string "yo")
+	, assert "empty" (list_match [])
+	, assert "one" (list_match [,1])
+	, assert "one" (list_match [,[]])
+	, assert "two" (list_match [,1,2])
+	, assert "two" (list_match [,"one","two"])
+	, assert "many" (list_match [,1,2,3])
+	, assert "many" (list_match [,[], [], []])
+	, assert "left" (type_match (Left 3))
+	, assert "left" (type_match (Left "hi"))
+	, assert "right" (type_match (Right False))
+	, assert "right" (type_match (Right, []))
+	].
+
+let count_fold = function assert_res count ->
+	match assert_res with
+		Nothing -> count.
+		Just msg ->
+			ln msg
+			| always (count + 1).
+	..
+
+let count_fails = function ->
+	List.foldl count_fold 0 assertions.
+
+expose spec main = List String -> Integer.
+let main = function _ ->
+	count_fails.

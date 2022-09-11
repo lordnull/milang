@@ -322,6 +322,97 @@ alias number-list when [,a number] = list a.
 
 ```
 
+## matches
+
+A match expresses tests an expression against 1 or more clauses, and executes the
+expression associated with the first clause that passes.
+
+All clauses must have the same type for the check, and for the expression the
+clause evaluates to. This is a natural extension of the expression being matched
+having 1 type.
+
+A match must be exhaustive in it's clauses. Thus, an 'ignored bind' is allowed.
+
+A match can bind values, and contain sub matches.
+
+```milang
+let string_literal = function s ->
+	match s with
+		"a literal string" ->
+			True.
+		"a different literal string" ->
+			True.
+		{- this clauses is required as we must match all possible values for the
+		type String. -}
+		_ ->
+			False.
+	..
+
+let integer_literal = function n ->
+	match n with
+		n when n < 0 ->
+			"negative".
+		0 ->
+			"0".
+		_ ->
+			"positive".
+	..
+
+let type_match = function maybe ->
+	match maybe with
+		Nothing ->
+			False.
+		{- since we're not using the value itself, we can just ignore it. -}
+		Some _ ->
+			True.
+	..
+
+let sub_literal = function maybe ->
+	match maybe with
+		Nothing ->
+			"default".
+		Just 0 ->
+			"default".
+		Just n ->
+			"not default".
+	..
+
+let sub_type = function maybe ->
+	match maybe with
+		Nothing ->
+			Nothing.
+		Just Nothing ->
+			Nothing.
+		Just true_maybe ->
+			true_maybe.
+	..
+
+let expression = function a b ->
+	match a + b with
+		0 ->
+			"0".
+		n when n > 0 ->
+			"positive".
+		_ ->
+			"negative".
+	..
+
+let head = function list ->
+	match list with
+		[] ->
+			Nothing.
+		h :: _tail ->
+			Just h.
+	..
+
+{- binds can also shorthand matches for types that have 1 representation. -}
+type T = T String.
+
+let get_name = function t ->
+	let T name = t.
+	name.
+
+```
 
 
 

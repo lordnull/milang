@@ -29,6 +29,7 @@ it(_Ast, _Mode) ->
 % * reused type names
 % * reused bind names
 % * non-exhaustive matches
+% * spec with no function ( module compile only)
 
 
 %it(AST, Mode) ->
