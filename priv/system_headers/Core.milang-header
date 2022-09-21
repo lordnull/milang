@@ -5,10 +5,208 @@ type Core.Integer.
 
 type Core.Unit.
 
+type Core.Float.
+
+type Core.Boolean = [, Core.True , Core.False ].
+
 type Core.Never = [, Core.RecurseForever Core.Never].
 
-type Core.List a = [, Core.Cons a ( Core.List a) , Core.Nil].
+spec Core.|> = a -> (a -> b) -> b.
 
-spec Core.| = a -> (a -> b) -> b.
+spec Core.<| = (a -> b) -> a -> b.
+
+spec Core.identity = a -> a.
 
 spec Core.always = a -> (_ -> a).
+
+spec Core.not = Core.Boolean -> Core.Boolean.
+
+spec Core.and = Core.Boolean -> Core.Boolean -> Core.Boolean.
+
+spec Core.or = Core.Boolean -> Core.Boolean -> Core.Boolean.
+
+spec Core.xor = Core.Boolean -> Core.Boolean -> Core.Boolean.
+
+spec Core.integer-== = Core.Integer -> Core.Integer -> Core.Boolean.
+
+class Core.Equality a =
+	spec == = a -> a -> Core.Boolean.
+	spec <> = a -> a -> Core.Boolean.
+	let <> = function a b ->
+		Core.not (== a b)..
+	.
+
+teach Core.Integer class Core.Equality ->
+	let == = Core.integer-==.
+	.
+
+spec Core.float-== = Core.Float -> Core.Float -> Core.Boolean.
+
+teach Core.Float class Core.Equality ->
+	let == = Core.float-==.
+	.
+
+spec Core.string-== = Core.String -> Core.String -> Core.Boolean.
+
+teach Core.String class Core.Equality ->
+	let == = Core.string-==.
+	.
+
+spec Core.boolean-== = Core.Boolean -> Core.Boolean -> Core.Boolean.
+
+teach Core.Boolean class Core.Equality ->
+	let == = Core.boolean-==.
+	.
+
+type Core.Order = [
+	, Core.LessThan
+	, Core.GreaterThan
+	, Core.EqualTo
+	].
+
+class Core.Sortable a when [
+	, a Core.Equality
+	] =
+	spec compare = a -> a -> Core.Order.
+	spec > = a -> a -> Core.Boolean.
+	spec >= = a -> a -> Core.Boolean.
+	spec < = a -> a -> Core.Boolean.
+	spec <= = a -> a -> Core.Boolean.
+	let > = function a b ->
+		match (compare a b) with
+			Core.GreaterThan ->
+				Core.True.
+			_ ->
+				Core.False.
+		...
+	let >= = function a b ->
+		match compare a b with
+			Core.GreaterThan ->
+				Core.True.
+			Core.EqualTo ->
+				Core.True.
+			Core.LessThan ->
+				Core.False.
+		...
+	let < = function a b ->
+		match compare a b with
+			Core.LessThan ->
+				Core.True.
+			_ ->
+				Core.False.
+		...
+	let <= = function a b ->
+		match compare a b with
+			Core.LessThan ->
+				Core.True.
+			Core.EqualTo ->
+				Core.True.
+			Core.GreaterThan ->
+				Core.True.
+		...
+	.
+
+spec Core.integer-compare = Core.Integer -> Core.Integer -> Core.Order.
+
+teach Core.Integer class Core.Sortable ->
+	let compare = Core.integer-compare.
+	.
+
+spec Core.float-compare = Core.Float -> Core.Float -> Core.Order.
+
+teach Core.Float class Core.Sortable ->
+	let compare = Core.float-compare.
+	.
+
+class Core.Number a when [
+	, a Core.Sortable
+	] =
+	{- Your most basic of addition. -}
+	spec + = a -> a -> a.
+	{- Basic multiplication. -}
+	spec * = a -> a -> a.
+	{- "unsafe" division. If you try to divide by 0, it should return
+	Nothing, else Some a. This forces the programmer to handle this case at
+	compile time. -}
+	spec / = a -> a -> Maybe a.
+	{- "safe" division. Allow a default to be defined in case the devision is
+	by 0. -}
+	spec // = a -> a -> a -> a.
+	let // = function default numerator denominator ->
+		match numerator '/ denominator with
+			Nothing ->
+				default.
+			Some n ->
+				n.
+		..
+	.
+	{- standard subtraction. -}
+	spec - = a -> a -> a.
+	let - = function first second ->
+		first '+ additive_inverse second.
+	.
+	{- "unsafe" exponent. if one tries to 0 ^ 0, one gets Nothing. -}
+	spec ^ = a -> a -> Maybe a.
+	{- "safe" exponent. Requires a default to be given in case one tries to
+	0 ^^ 0. -}
+	spec ^^ = a -> a -> a -> a.
+	let ^^ = function base default pow ->
+		match base '^ pow with
+			Nothing ->
+				default.
+			Some n ->
+				n.
+		.
+	..
+	{- Absolute value. -}
+	spec abs = a -> a.
+	{- returns the "sign" of the value. The following should hold:
+		abs x '* sign_of x == x
+	In other words, if x is negative, sign_of should return the negative
+	multiplicative identity (for integers, that's -1). If x is positive,
+	the positive multiplicative identity (for integers, that's 1). -}
+	spec sign_of = a -> a.
+	{- Given an integer, return the value of the type the corresponds to it. -}
+	spec from_integer = Core.Integer -> a.
+	{- Allows subtraction to work. -}
+	spec additive_inverse = a -> a.
+	.
+
+spec Core.integer+ = Core.Integer -> Core.Integer -> Core.Integer.
+spec Core.integer* = Core.Integer -> Core.Integer -> Core.Integer.
+spec Core.integer/ = Core.Integer -> Core.Integer -> Maybe.Maybe Core.Integer.
+spec Core.integer^ = Core.Integer -> Core.Integer -> Maybe.Maybe Core.Integer.
+spec Core.integer-abs = Core.Integer -> Core.Integer.
+spec Core.integer-sign_of = Core.Integer -> Core.Integer.
+spec Core.integer-additive_inverse = Core.Integer -> Core.Integer.
+
+teach Core.Integer class Core.Number ->
+	let + = Core.integer+.
+	let * = Core.integer*.
+	let / = Core.integer/.
+	let ^ = Core.integer^.
+	let abs = Core.integer-abs.
+	let sign_of = Core.integer-sign_of.
+	let from_integer = Core.identity.
+	let additive_inverse = Core.integer-additive_inverse.
+	.
+
+spec Core.float+ = Core.Float -> Core.Float -> Core.Float.
+spec Core.float* = Core.Float -> Core.Float -> Core.Float.
+spec Core.float/ = Core.Float -> Core.Float -> Maybe.Maybe Core.Float.
+spec Core.float^ = Core.Float -> Core.Float -> Maybe.Maybe Core.Float.
+spec Core.float-abs = Core.Float -> Core.Float.
+spec Core.float-sign_of = Core.Float -> Core.Float.
+spec Core.float-from_integer = Core.Integer -> Core.Float.
+spec Core.float-additive_inverse = Core.Float -> Core.Float.
+
+teach Core.Float class Core.Number ->
+	let + = Core.float+.
+	let * = Core.float*.
+	let / = Core.float/.
+	let ^ = Core.float^.
+	let abs = Core.float-abs.
+	let sign_of = Core.float-sign_of.
+	let from_integer = Core.float-from_integer.
+	let additive_inverse = Core.float-additive_inverse.
+	.

@@ -187,6 +187,7 @@ compile(ASTNode, Stack, CompileState) ->
 				{ok, ImportAST} ->
 					compile(ImportAST, Stack, WithSupport);
 				{error, Error} ->
+					?LOG_DEBUG("Unable to complete import.~n    Node: ~p~n    Error: ~p", [ASTNode, Error]),
 					ErrorState = add_error(milang_ast:location(ASTNode), Error, WithSupport),
 					compile([], Stack, ErrorState)
 			end;
@@ -213,6 +214,12 @@ compile(ASTNode, Stack, CompileState) ->
 			NewState = type_validation(ASTNode, CompileState),
 			compile([], Stack, NewState);
 		{ok, type} ->
+			NewState = type_validation(ASTNode, CompileState),
+			compile([], Stack, NewState);
+		{ok, class} ->
+			NewState = type_validation(ASTNode, CompileState),
+			compile([], Stack, NewState);
+		{ok, teach} ->
 			NewState = type_validation(ASTNode, CompileState),
 			compile([], Stack, NewState);
 		{ok, _T} ->

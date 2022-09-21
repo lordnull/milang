@@ -1,0 +1,29 @@
+module RecordTest.
+
+let bind_to_record = { , fst = 1 , snd = 2 }.
+
+expose alias RecordAlias1 = {, fst = Integer, snd = Integer }.
+
+spec build_alias_1 = Integer -> Integer -> RecordAlias1.
+let build_alias_1 = function a b ->
+	{, fst = a , snd = b }..
+
+expose alias RecordAlias2 a = {, fst = a, snd = Integer }.
+
+spec build_alias_2 = a -> Integer -> RecordAlias2 a.
+let build_alias_2 = function a b ->
+	{, fst = a , snd = b }..
+
+let field_access_1 = function ->
+	let n = .fst ( build_alias_1 5 7 ),
+	match n with
+		5 ->
+			Nothing.
+		not_5 ->
+			System.Print.ln ("field_access_1 failed " ++ ( String.fromInteger not_5 )).
+	..
+
+
+spec main = List String -> Integer.
+let main = function _ ->
+	run_tests..

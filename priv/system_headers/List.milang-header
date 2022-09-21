@@ -1,0 +1,20 @@
+type List.List a = [
+	, List.Nil
+	, List.Cons a ( List.List a)
+	].
+
+spec List.empty = List.List a.
+
+spec List.cons = a -> List.List a -> List.List a.
+
+spec List.foldl = ( element -> accumulator ) -> accumulator -> List.List element -> accumulator.
+
+spec List.reverse = List.List a -> List.List a.
+
+spec List.foldr = (element -> accumulator) -> accumuator -> List.List element -> accumulator.
+
+spec List.map = (a -> b) -> List.List a -> List.List b.
+
+spec List.head = List.List a -> Maybe.Maybe a.
+
+spec List.tail = List.List a -> List.List a.

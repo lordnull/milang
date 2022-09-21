@@ -234,6 +234,30 @@ let l2 = [
 	].
 	```
 
+### algebraic types
+
+This is the meat and potatos of the type system. It's based on dialyzer and elm.
+
+```milang
+
+{- This creates a constructor with only the name of the type and no value. It's
+essentialy an enum with one value. -}
+type SingleConstructor.
+
+{- Similar to the above, but the constructor takes a single argument. There can
+be more. -}
+type SingleArg a.
+
+{- This creates 2 constructors, one named 'Nothing' and one named 'Some'. The
+former takes 0 args, the lower takes 1. -}
+type Maybe a = [
+	, Nothing
+	, Some a
+	].
+```
+
+
+
 ### record
 
 Records are used to group heterogeneous types together with names. The types are
@@ -322,7 +346,7 @@ alias number-list when [,a number] = list a.
 
 ```
 
-## matches
+### matches
 
 A match expresses tests an expression against 1 or more clauses, and executes the
 expression associated with the first clause that passes.
@@ -401,9 +425,36 @@ let head = function list ->
 	match list with
 		[] ->
 			Nothing.
-		h :: _tail ->
+		[ , h ,, _tail ] ->
 			Just h.
 	..
+
+let dumb_count = function list ->
+	match list with
+		[] -> "0".
+		[, _ ] -> "1".
+		[, _ , _ ] -> "2".
+		_ -> "many".
+	..
+
+let zip = function list1 list2 ->
+	zip_acc [] list1 list2.
+
+{- this demonstrations not just nested matching, but how a function bound to a
+name can call itself, no extra syntax needed. -}
+let zip_acc = function acc list1 list2 ->
+	match tuple list1 list2 with
+		Tuple [ , h1 ,, t1 ] [ , h2 ,, t2 ] ->
+			let zipped = tuple h1 h2.
+			let new_acc = cons zipped acc.
+			zip_acc new_acc t1 t2.
+		Tuple [] [] ->
+			reverse acc
+			| Just.
+		_ ->
+			Nothing.
+	..
+
 
 {- binds can also shorthand matches for types that have 1 representation. -}
 type T = T String.
@@ -412,7 +463,129 @@ let get_name = function t ->
 	let T name = t.
 	name.
 
+let new_t = T.
+
+{- there's nothing that says a top level bind has to be a function. It's of
+limited use, though. Eseentially it's only able to match a literal or fully
+expressed value with other literals or fully expressed values. -}
+
+let raw_match =
+	match 5 with
+		4 ->
+			Just "wut".
+		5 ->
+			Nothing.
+		_ ->
+			Just "no seriously, wut".
+	..
+
 ```
+
+### class and implementations
+
+Milang uses classes in a similar manner to Haskell. A class defines a set of
+functions that a data type can implement. The functions can then be used on
+any datatype that implments the function. A canonical example is the Haskell
+'Eq' class, which defines a '==' function, allowing types to do equality
+comparison.
+
+This is where constraints come in. A type or spec can define some variables as
+being a member of a specific class. This can also be used to define interfaces.
+
+```milang
+
+module Math.
+
+class Equality a =
+	spec == = a -> a -> Boolean.
+	spec <> = a -> a -> Boolean.
+	let == = function a b ->
+		not ( a '<> b ).
+	let <> = function a b ->
+		not ( a '== b ).
+	.
+
+type Order = [
+	, LessThan
+	, GreaterThan
+	, EqualTo
+	].
+
+class Sortable a when [
+	, a Equality
+	] =
+	spec compare = a -> a -> Order.
+	spec > = a -> a -> Boolean.
+	spec >= = a -> a -> Boolean.
+	spec < = a -> a -> Boolean.
+	spec <= = a -> a -> Boolean.
+	let > = function a b ->
+		match compare a b with
+			GreaterThan ->
+				True.
+			_ ->
+				False.
+		..
+	let '>=' = function a b ->
+		match compare a b with
+			GreaterThan ->
+				True.
+			EqualTo ->
+				True.
+			_ ->
+				False.
+		..
+	let '<' = function a b ->
+		match compare a b with
+			LessThan ->
+				True.
+			_ ->
+				False.
+		..
+	let '<=' = function a b ->
+		match compare a b with
+			LessThan ->
+				True.
+			EqualTo ->
+				True.
+			_ ->
+				False.
+		..
+	.
+
+class Numerical a when [
+	, a Sortable
+	] =
+	spec + = a -> a -> a.
+	spec * = a -> a -> a.
+	spec - = a -> a -> a.
+	spec / = a -> a -> a.
+	spec ^ = a -> a -> a.
+	.
+
+type Integer = Kernel.BigInt.
+
+teach Integer class Numerical ->
+	let == = function a b ->
+		Kernel.== a b..
+	let compare = function a b ->
+		match Kernel.compare a b with
+			Kernel.LessThan ->
+				LessThan.
+			Kernel.EqualTo ->
+				EqualTo.
+			Kernel.GreaterThan ->
+				GreaterThan.
+		..
+	let + = Kernel.+.
+	let * = Kernel.*.
+	let - = Kernel.-.
+	let / = Kernel./.
+	let ^ = Kernel.Math.pow.
+	.
+```
+
+
 
 
 

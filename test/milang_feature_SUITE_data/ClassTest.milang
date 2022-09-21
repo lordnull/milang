@@ -1,0 +1,65 @@
+{- the test is primarily to ensure things compile and pass type checks. -}
+module ClassTest.
+
+type Pants = [
+	, NoPants
+	, Kilt
+	, Jeans
+	, Slacks
+	, Skinny
+	].
+
+type Tuple a b.
+
+teach Pants class Core.Equality ->
+	let == = function p1 p2 ->
+		let tup = Tuple p1 p2.
+		match tup with
+			Tuple NoPants NoPants ->
+				True.
+			Tuple Kilt Kilt ->
+				True.
+			Tuple Jeans Jeans ->
+				True.
+			Tuple Slacks Slacks ->
+				True.
+			Tuple Skinny Skinny ->
+				True.
+			_ ->
+				False.
+		.
+	..
+.
+
+teach Pants class Core.Sortable ->
+	let compare = function p1 p2 ->
+		let tuple = Tuple p1 p2.
+		match tuple with
+			Tuple p p ->
+				Core.EqualTo.
+			Tuple NoPants _ ->
+				Core.GreaterThan.
+			Tuple Skinny _ ->
+				Core.LessThan.
+			Tuple _ NoPants ->
+				Core.LessThan.
+			Tuple _ Skinny ->
+				Core.GreaterThan.
+			Tuple Kilt _ ->
+				Core.GreaterThan.
+			Tuple _ Kilt ->
+				Core.GreaterThan.
+			Tuple Jeans _ ->
+				Core.GreaterThan.
+			Tuple _ Jeans ->
+				Core.LessThan.
+			Tuple Slacks _ ->
+				Core.GreaterThan.
+			Tuple _ Slacks ->
+				Core.LessThan.
+		.
+	...
+
+expose spec main = List String -> Integer.
+let main = function _ ->
+	0..

@@ -1,0 +1,8 @@
+type Maybe.Maybe a = [
+	, Maybe.Nothing
+	, Maybe.Some a
+	].
+
+spec Maybe.map = (a -> b) -> Maybe.Maybe a -> Maybe.Maybe b.
+
+spec Maybe.and_then = (a -> Maybe.Maybe b) -> Maybe.Maybe a -> Maybe.Maybe b.

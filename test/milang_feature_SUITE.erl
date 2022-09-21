@@ -19,6 +19,7 @@ groups() ->
 		, comment_test
 		%, record_test
 		, match_test
+		, class_test
 		]}
 	].
 
@@ -112,6 +113,24 @@ match_test(Cfg) ->
 	OutputFile = filename:join([PrivDir, "MatchTest"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
 	ok = milang_compile:compile(AST, [{input_file_name, "MatchTest.milang"}, {output_file_name, OutputFile}, {work_dir, WorkDir}]),
+	Result = os:cmd(OutputFile),
+	case Result of
+		"" ->
+			ok;
+		_ ->
+			ct:pal("Errors: ~n~p", [Result]),
+			ct:fail(match_test_failure)
+	end.
+
+class_test(Cfg) ->
+	milang_log:set_log_level(debug),
+	DataDir = proplists:get_value(data_dir, Cfg),
+	PrivDir = proplists:get_value(priv_dir, Cfg),
+	{ok, Tokens} = milang_parse:file(filename:join([DataDir, "ClassTest.milang"])),
+	{ok, AST} = milang_lex:as_module(Tokens),
+	OutputFile = filename:join([PrivDir, "ClassTest"]),
+	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
+	ok = milang_compile:compile(AST, [{input_file_name, "ClassTest.milang"}, {output_file_name, OutputFile}, {work_dir, WorkDir}]),
 	Result = os:cmd(OutputFile),
 	case Result of
 		"" ->

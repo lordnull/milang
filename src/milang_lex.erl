@@ -73,8 +73,22 @@ root({expect_declaration, Comments}, [{keyword, _, type} = T | Tokens], Options,
 		Error ->
 			Error
 	end;
-root({expect_declaration, _Comments}, [{keyword, _, class} | _], _Options, _Acc) ->
-	{error, {nyi, declaration_class}};
+root({expect_declaration, Comments}, [{keyword, L, class} | Tokens], Options, Acc) ->
+	ProtoNode = milang_ast:ast_node(L, Comments),
+	case declaration_class(ProtoNode, Tokens, Options) of
+		{ok, Declaration, NewTokens} ->
+			root(consume_whitespace, NewTokens, Options, [Declaration | Acc]);
+		Error ->
+			Error
+	end;
+root({expect_declaration, Comments}, [{keyword, L, 'teach'} | Tokens], Options, Acc) ->
+	ProtoNode = milang_ast:ast_node(L, Comments),
+	case declaration_teach(ProtoNode, Tokens, Options) of
+		{ok, Declaration, NewTokens} ->
+			root(consume_whitespace, NewTokens, Options, [Declaration | Acc]);
+		Error ->
+			Error
+	end;
 root({expect_declaration, Comments}, [{keyword, L, 'let'} | Tokens], Options, Acc) ->
 	ProtoNode = milang_ast:ast_node(L, Comments, undefined),
 	case declaration_let(ProtoNode, Tokens, Options) of
@@ -362,8 +376,157 @@ declaration_alias(finish, Node, Tokens, _Options) ->
 			lex_error(hd(TokensSansSpace), dot, {declaration, {finish, Node}})
 	end.
 
-%declaration_class(_ProtoNode, _Tokens, _Options) ->
-%	{error, {class, nyi}}.
+declaration_class(ProtoNode, Tokens, Options) ->
+	declaration_class(name, ProtoNode, Tokens, Options).
+
+declaration_class(name, ProtoNode, Tokens, Options) ->
+	case space(Tokens) of
+		{false, _, _} ->
+			lex_error(hd(Tokens), space, {declaration_class, {name, ProtoNode}});
+		{true, Comments, TokensSansSpace} ->
+			declaration_class({name, Comments}, ProtoNode, TokensSansSpace, Options)
+	end;
+
+declaration_class({name, Comments}, ProtoNode, Tokens, Options) ->
+	case Tokens of
+		[{identifier_type, L, Name} | NewTokens] ->
+			NameNode = milang_ast:ast_node(L, Comments, {identifier_type, Name}),
+			declaration_class({args, [], NameNode}, ProtoNode, NewTokens, Options);
+		[H | _] ->
+			lex_error(H, identifier_type, {declaration_class, {name, Comments, ProtoNode}})
+	end;
+
+declaration_class({args, ArgAcc, NameNode}, ProtoNode, Tokens, Options) ->
+	case space(Tokens) of
+		{false, _, _} ->
+			lex_error(hd(Tokens), space, {declaration_class, {args, ArgAcc, NameNode, ProtoNode}});
+		{true, Comments, [{identifier_bound, L, Name} | Tail]} ->
+			ArgNode = milang_ast:ast_node(L, Comments, {identifier_bound, Name}),
+			declaration_class({args, [ ArgNode | ArgAcc ], NameNode}, ProtoNode, Tail, Options);
+		{true, Comments, [{keyword, L, 'when'} | Tail]} ->
+			{_, MoreComments, CosntraintsStart} = space(Tail),
+			ConstraintsNode = milang_ast:ast_node(L, [Comments, MoreComments]),
+			declaration_class({constraints, ConstraintsNode, ArgAcc, NameNode}, ProtoNode, CosntraintsStart, Options);
+		{true, Comments, [{syntax_bind, _, _} | Tail]} ->
+			declaration_class({members, [], undefined, ArgAcc, NameNode}, ProtoNode, Comments ++ Tail, Options)
+	end;
+
+declaration_class({constraints, ConstraintsProtoNode, ArgNodes, NameNode}, ProtoNode, Tokens, Options) ->
+	case constraints(ConstraintsProtoNode, Tokens, Options) of
+		{ok, Constraints, NewTokens} ->
+			declaration_class({syntax_bind, Constraints, ArgNodes, NameNode}, ProtoNode, NewTokens, Options);
+		Error ->
+			Error
+	end;
+
+declaration_class({syntax_bind, Constraints, ArgNodes, NameNode}, ProtoNode, Tokens, Options) ->
+	{_, _, TokensSansSpace} = space(Tokens),
+	case TokensSansSpace of
+		[{syntax_bind, _, _} | Tail] ->
+			declaration_class({members, [], Constraints, ArgNodes, NameNode}, ProtoNode, Tail, Options);
+		[H | _] ->
+			lex_error(H, syntax_bind, {declaration_class, {syntax_bind, Constraints, ArgNodes, NameNode, ProtoNode}})
+	end;
+
+declaration_class({members, MembersAcc, Constraints, Args, Name}, ProtoNode, Tokens, Options) ->
+	{_, Comments, TokensSansSpace} = space(Tokens),
+	[{_, L, _} = Head | TokenTail ] = TokensSansSpace,
+	MemberProtoNode = milang_ast:ast_node(Comments, L),
+	case Head of
+		{keyword, _, 'let'} ->
+			case declaration_let(MemberProtoNode, TokenTail, Options) of
+				{ok, Node, NewTokens} ->
+					declaration_class({members, [Node | MembersAcc], Constraints, Args, Name}, ProtoNode, NewTokens, Options);
+				Error ->
+					Error
+			end;
+		{keyword, _, spec} ->
+			case declaration_spec(MemberProtoNode, TokenTail, Options) of
+				{ok, Node, NewTokens} ->
+					declaration_class({members, [Node | MembersAcc], Constraints, Args, Name}, ProtoNode, NewTokens, Options);
+				Error ->
+					Error
+			end;
+		{syntax_dot, _, _} ->
+			declaration_class({finish, MembersAcc, Constraints, Args, Name}, ProtoNode, TokenTail, Options)
+	end;
+
+declaration_class({finish, ReversedMembers, Constraints, ReversedArgs, Name}, ProtoNode, Tokens, _Options) ->
+	Members = lists:reverse(ReversedMembers),
+	Args = lists:reverse(ReversedArgs),
+	Data = milang_ast_class:new(Name, Constraints, Args, Members),
+	Node = milang_ast:transform_data(fun(_) -> Data end, ProtoNode),
+	{ok, Node, Tokens}.
+
+declaration_teach(ProtoNode, Tokens, Options) ->
+	declaration_teach(name_of_student, ProtoNode, Tokens, Options).
+
+declaration_teach(name_of_student, ProtoNode, Tokens, Options) ->
+	case space(Tokens) of
+		{false, _, _} ->
+			lex_error(hd(Tokens), space, {declaration_teach, {name_of_student, ProtoNode}});
+		{true, Comments, [{identifier_type, L, Name} | Tail]} ->
+			StudentNode = milang_ast:ast_node(L, Comments, {identifier_type, Name}),
+			declaration_teach({class_keyword, StudentNode}, ProtoNode, Tail, Options);
+		{_, _, [H | _]} ->
+			lex_error(H, identifier_type, {declaration_teach, {name_of_student, ProtoNode}})
+	end;
+
+declaration_teach({class_keyword, StudentNode}, ProtoNode, Tokens, Options) ->
+	case space(Tokens) of
+		{false, _, _} ->
+			lex_error(hd(Tokens), space, {declaration_teach, {class_keyword, StudentNode, ProtoNode}});
+		{true, Comments, [{keyword, _, class} | Tail]} ->
+			declaration_teach({class_taught, Comments, StudentNode}, ProtoNode, Tail, Options);
+		{_, _, [H | _]} ->
+			lex_error(H, keyword_class, {declaration_teach, {class_keyword, StudentNode, ProtoNode}})
+	end;
+
+declaration_teach({class_taught, Comments, StudentNode}, ProtoNode, Tokens, Options) ->
+	case space(Tokens) of
+		{false, _, _} ->
+			lex_error(hd(Tokens), space, {declaration_teach, {class_taught, Comments, StudentNode, ProtoNode}});
+		{true, MoreComments, [{identifier_type, L, Name} | Tail]} ->
+			ClassNode = milang_ast:ast_node(L, Comments ++ MoreComments, {identifier_type, Name}),
+			declaration_teach({implies, ClassNode, StudentNode}, ProtoNode, Tail, Options);
+		{_, _, [H | _]} ->
+			lex_error(H, indentifier_type, {declaration_teach, {class_taught, Comments, StudentNode, ProtoNode}})
+	end;
+
+declaration_teach({implies, ClassNode, StudentNode}, ProtoNode, Tokens, Options) ->
+	case space(Tokens) of
+		{false, _, _} ->
+			lex_error(hd(Tokens), space, {declaration_teach, {implies, ClassNode, StudentNode, ProtoNode}});
+		{true, _Comments, [{syntax_implies, _, _} | Tail]} ->
+			declaration_teach({bindings, [], ClassNode, StudentNode}, ProtoNode, Tail, Options);
+		{_, _, [H | _]} ->
+			lex_error(H, syntax_implies, {declaration_teach, {implies, ClassNode, StudentNode, ProtoNode}})
+	end;
+
+declaration_teach({bindings, Acc, ClassNode, StudentNode}, ProtoNode, Tokens, Options) ->
+	case space(Tokens) of
+		{_, Comments, [{keyword, L, 'let'} | Tail]} ->
+			LetProtoNode = milang_ast:ast_node(L, Comments),
+			declaration_teach({bindings, LetProtoNode, Acc, ClassNode, StudentNode}, ProtoNode, Tail, Options);
+		{_, _, [{syntax_dot, _, _} | Tail]} ->
+			declaration_teach({finish, Acc, ClassNode, StudentNode}, ProtoNode, Tail, Options);
+		{_, _, [H | _]} ->
+			lex_error(H, [keyword_let, syntax_dot], {declaration_teach, {bindings, Acc, ClassNode, StudentNode, ProtoNode}})
+	end;
+
+declaration_teach({bindings, ProtoBinding, Acc, ClassNode, StudentNode}, ProtoNode, Tokens, Options) ->
+	case declaration_let(ProtoBinding, Tokens, Options) of
+		{ok, BindingNode, NewTokens} ->
+			declaration_teach({bindings, [ BindingNode | Acc], ClassNode, StudentNode}, ProtoNode, NewTokens, Options);
+		Error ->
+			Error
+	end;
+
+declaration_teach({finish, ReversedBindings, ClassNode, StudentNode}, ProtoNode, Tokens, _Options) ->
+	Bindings = lists:reverse(ReversedBindings),
+	Data = milang_ast_teach:new(StudentNode, ClassNode, Bindings),
+	Node = milang_ast:transform_data(fun(_) -> Data end, ProtoNode),
+	{ok, Node, Tokens}.
 
 % start :
 %     open_paren -> (start) -> {close_paren, [Res]}.
@@ -514,7 +677,9 @@ type(finish, ProtoNode, Tokens, _Options) ->
 	end;
 
 type({subexpression, SubProto}, ProtoNode, Tokens, Options) ->
-	case type(start, SubProto, Tokens, Options) of
+	{_, MoreComments, TokensSansSpace} = space(Tokens),
+	SubProtoFullComments = milang_ast:add_doc(MoreComments, SubProto),
+	case type(SubProtoFullComments, TokensSansSpace, Options) of
 		{ok, Node, NewTokens} ->
 			type({subexpression_close, Node}, ProtoNode, NewTokens, Options);
 		Error ->
@@ -650,7 +815,7 @@ constraints({next_or_done, Acc}, ProtoNode, Tokens, Options) ->
 			constraints({next, EntryNode, Acc}, ProtoNode, NewTokens, Options);
 		[{syntax_close, _, list} | NewTokens] ->
 			NewAcc = lists:reverse(Acc),
-			NewNode = milang_ast:transform_data(fun(_) -> milang_constraints:new(NewAcc) end, ProtoNode),
+			NewNode = milang_ast:transform_data(fun(_) -> milang_ast_constraints:new(NewAcc) end, ProtoNode),
 			{ok, NewNode, NewTokens};
 		_ ->
 			lex_error(hd(TokensSansSpace), [syntax_element_seperator, syntax_close_list], {constraints, {next_or_done, Acc}})
@@ -672,7 +837,7 @@ constraints({constraint_for, Name, EntryNode, Acc}, ProtoNode, Tokens, Options) 
 	case {MaybeSpace, MaybeIdentifer} of
 		{true, {ok, Constraint, NewTokens}} ->
 			FullyDocEntryNode = milang_ast:add_doc(Comments, EntryNode),
-			FullEntryNode = milang_ast:transform_data(fun(_) -> milang_constraint:new(Name, Constraint) end, FullyDocEntryNode),
+			FullEntryNode = milang_ast:transform_data(fun(_) -> milang_ast_constraint:new(Name, Constraint) end, FullyDocEntryNode),
 			constraints({next_or_done, [FullEntryNode | Acc]}, ProtoNode, NewTokens, Options);
 		{true, Error} ->
 			Error;
@@ -1218,14 +1383,381 @@ expression_non_infix(Tokens, Options) ->
 		{literal_float, L, F} ->
 			Node = milang_ast:ast_node(L, Comments, {literal_float, F}),
 			{ok, Node, Rest};
+		{syntax_open, L, list} ->
+			Node = milang_ast:ast_node(L, Comments),
+			expression_literal_list(Node, TokensSansSpace, Options);
 		%{syntax_open, _, record} ->
 		%	expression_record(Tokens, Options);
 		{keyword, L, function} ->
 			Node = milang_ast:ast_node(L, Comments),
 			expression_function(Node, Rest, Options);
+		{keyword, L, match} ->
+			Node = milang_ast:ast_node(L, Comments),
+			expression_match(Node, Rest, Options);
 		_ ->
 			lex_error(Head, [expression_function, expression_constructor, expression_call, subexpression, literal], expression_non_infix)
 	end.
+
+expression_literal_list(ProtoNode, Tokens, Options) ->
+	case generic_list(Tokens, Options, fun expression/2) of
+		{ok, Items, NewTokens} ->
+			Node = milang_ast:transform_data(fun(_) ->
+				{literal_list, Items}
+			end, ProtoNode),
+			{ok, Node, NewTokens};
+		Error ->
+			Error
+	end.
+
+expression_match(ProtoNode, Tokens, Options) ->
+	expression_match(space_after_match_keyword, ProtoNode, Tokens, Options).
+
+expression_match(space_after_match_keyword, ProtoNode, Tokens, Options) ->
+	{HasSpace, _Comments, _TokensSansSpace} = space(Tokens),
+	case HasSpace of
+		true ->
+			MaybeExpression = expression(Tokens, Options),
+			expression_match({expression_to_match, MaybeExpression}, ProtoNode, Tokens, Options);
+		false ->
+			lex_error(hd(Tokens), [space], {expression_match, {space_after_match_keyword}})
+	end;
+
+expression_match({expression_to_match, {error, _} = Error}, _ProtoNode, _Tokens, _Options) ->
+	Error;
+
+expression_match({expression_to_match, {ok, ExpressionNode, Tokens}}, ProtoNode, _TooManyTokens, Options) ->
+	case space(Tokens) of
+		{false, _, _} ->
+			lex_error(hd(Tokens), space, {expression_match, {space_after_expression}});
+		{true, Comments, [{keyword, _L, 'with'} | Tail]} ->
+			expression_match({space_after_with, ExpressionNode, Comments}, ProtoNode, Tail, Options);
+		{true, _, TokensSansSpace} ->
+			lex_error(hd(TokensSansSpace), ['with'], {expression_match, {after_expression_before_clauses}})
+	end;
+
+expression_match({space_after_with, ExprNode, Comments}, ProtoNode, Tokens, Options) ->
+	case space(Tokens) of
+		{false, _, _} ->
+			lex_error(hd(Tokens), space, {expression_match, {space_after_with}});
+		{true, MoreComments, TokensSansSpace} ->
+			expression_match({first_clause, [Comments, MoreComments], ExprNode}, ProtoNode, TokensSansSpace, Options)
+	end;
+
+expression_match({first_clause, Comments, ExprNode}, ProtoNode, Tokens, Options) ->
+	case match_clause(Tokens, Options) of
+		{ok, MatchNode, NewTokens} ->
+			FullyCommentedMatchNode = milang_ast:pre_doc(Comments, MatchNode),
+			expression_match({match_clause_or_done, [FullyCommentedMatchNode], ExprNode}, ProtoNode, NewTokens, Options);
+		Error ->
+			Error
+	end;
+
+expression_match({match_clause_or_done, ClauseAcc, ExprNode}, ProtoNode, Tokens, Options) ->
+	{_, _Comments, TokensSansSpace} = space(Tokens),
+	case TokensSansSpace of
+		[{syntax_dot, _, _} | Tail] ->
+			Node = milang_ast:transform_data(fun(_) ->
+				milang_ast_match:new(ExprNode, lists:reverse(ClauseAcc))
+			end, ProtoNode),
+			{ok, Node, Tail};
+		_ ->
+			expression_match({match_clause, ClauseAcc, ExprNode}, ProtoNode, Tokens, Options)
+	end;
+
+expression_match({match_clause, ClauseAcc, ExprNode}, ProtoNode, Tokens, Options) ->
+	case match_clause(Tokens, Options) of
+		{ok, MatchNode, NewTokens} ->
+			NewAcc = [MatchNode | ClauseAcc],
+			expression_match({match_clause_or_done, NewAcc, ExprNode}, ProtoNode, NewTokens, Options);
+		Error ->
+			Error
+	end.
+
+match_clause(Tokens, Options) ->
+	{_, Comments, TokensSansSpace} = space(Tokens),
+	{_, L, _} = hd(TokensSansSpace),
+	ProtoNode = milang_ast:ast_node(L, Comments),
+	match_clause(match_head, ProtoNode, TokensSansSpace, Options).
+
+match_clause(match_head, ProtoNode, Tokens, Options) ->
+	case match_head(Tokens, Options) of
+		{ok, Head, NewTokens} ->
+			match_clause({match_body, [], Head}, ProtoNode, NewTokens, Options);
+		Error ->
+			Error
+	end;
+
+match_clause({match_body, BindAcc, Head}, ProtoNode, Tokens, Options) ->
+	{_, Comments, TokensSansSpace} = space(Tokens),
+	case TokensSansSpace of
+		[{keyword, L, 'let'} | Tail] ->
+			LetProto = milang_ast:ast_node(L, Comments),
+			case declaration_let(LetProto, Tail, Options) of
+				{ok, Node, NewTokens} ->
+					match_clause({match_body, [Node | BindAcc], Head}, ProtoNode, NewTokens, Options);
+				Error ->
+					Error
+			end;
+		_ ->
+			match_clause({match_expression, BindAcc, Head}, ProtoNode, Tokens, Options)
+	end;
+
+
+match_clause({match_expression, Binds, Head}, ProtoNode, Tokens, Options) ->
+	case expression(Tokens, Options) of
+		{ok, ExprNode, NewTokens} ->
+			match_clause({dot, Head, Binds, ExprNode}, ProtoNode, NewTokens, Options);
+		Error ->
+			Error
+	end;
+
+match_clause({dot, Head, Binds, ExprNode}, ProtoNode, Tokens, _Options) ->
+	{_, _, TokensSansSpace} = space(Tokens),
+	case TokensSansSpace of
+		[{syntax_dot, _, _} | Tail] ->
+			Node = milang_ast:transform_data(fun(_) ->
+				milang_ast_match_clause:new(Head, lists:reverse(Binds), ExprNode)
+			end, ProtoNode),
+			{ok, Node, Tail};
+		[H | _] ->
+			lex_error(H, syntax_dot, {match_clause, {dot, Head, ExprNode}})
+	end.
+
+match_head(Tokens, Options) ->
+	{_, Comments, [{_, L, _} | _] = TokensSansSpace} = space(Tokens),
+	ProtoNode = milang_ast:ast_node(L, Comments),
+	match_head(start, ProtoNode, TokensSansSpace, Options).
+
+match_head(start, ProtoNode, Tokens, Options) ->
+	Done = fun syntax_implies/4,
+	match_head({part, Done}, ProtoNode, Tokens, Options);
+
+match_head({part, Finish}, ProtoNode, Tokens, Options) ->
+	{_, Comments, TokensSansSpace} = space(Tokens),
+	case TokensSansSpace of
+		[{identifier_ignored, _, Name} | Tail ] ->
+			Node = milang_ast:transform_data(fun(_) ->
+				{identifier_ignored, Name}
+			end, ProtoNode),
+			match_head(Finish, Node, Tail, Options);
+		[{identifier_bound, _, Name} | Tail] ->
+			Node = milang_ast:transform_data(fun(_) ->
+				{identifier_bound, Name}
+			end, ProtoNode),
+			match_head(Finish, Node, Tail, Options);
+		[{literal_string, _, S} | Tail] ->
+			Node = milang_ast:transform_data(fun(_) ->
+				{literal_string, S}
+			end, ProtoNode),
+			match_head(Finish, Node, Tail, Options);
+		[{literal_integer, _, N} | Tail] ->
+			Node = milang_ast:transform_data(fun(_) ->
+				{literal_integer, N}
+			end, ProtoNode),
+			match_head(Finish, Node, Tail, Options);
+		[{literal_float, _, N} | Tail] ->
+			Node = milang_ast:transform_data(fun(_) ->
+				{literal_float, N}
+			end, ProtoNode),
+			match_head(Finish, Node, Tail, Options);
+		[{identifier_type, L, _Name} | _Tail] ->
+			MatchTypeProtoNode = milang_ast:ast_node(Comments, L),
+			case match_type(MatchTypeProtoNode, TokensSansSpace, Options) of
+				{ok, NewData, NewTokens} ->
+					Node = milang_ast:transform_data(fun(_) ->
+						NewData
+					end, ProtoNode),
+					match_head(Finish, Node, NewTokens, Options);
+				Error ->
+					Error
+			end;
+		[{syntax_open, L, list} | Tail] ->
+			MatchListProtoNode = milang_ast:ast_node(Comments, L),
+			case match_list(MatchListProtoNode, Tail, Options) of
+				{ok, NewData, NewTokens} ->
+					Node = milang_ast:transform_data(fun(_) ->
+						NewData
+					end, ProtoNode),
+					match_head(Finish, Node, NewTokens, Options);
+				Error ->
+					Error
+			end;
+		[{syntax_open, L, subexpression} | Tail] ->
+			MatchSubProtoNode = milang_ast:ast_node(L, Comments),
+			case match_sub(MatchSubProtoNode, Tail, Options) of
+				{ok, Node, NewTokens} ->
+					match_head(Finish, Node, NewTokens, Options);
+				Error ->
+					Error
+			end;
+		[E | _] ->
+			lex_error(E, [identifier_bound, identifier_type, identifier_ignored, literal_float, literal_string, literal_integer, syntax_open_list], {match_head, {start, ProtoNode}})
+	end;
+
+match_head(Finish, Node, Tokens, Options) ->
+	{_, _Comments, TokensSansSpace} = space(Tokens),
+	Finish(TokensSansSpace, match_head, Node, Options).
+
+match_type(ProtoNode, Tokens, Options) ->
+	[{identifier_type, _, Name} | Tail] = Tokens,
+	match_type({gather_args, [], Name}, ProtoNode, Tail, Options).
+
+match_type({gather_args, ArgAcc, TypeName}, ProtoNode, Tokens, Options) ->
+	case space(Tokens) of
+		% don't know if we really are done or not for these 3, but not worth
+		% exploding over.
+		{_, _, [{syntax_implies, _, _} | _] = TokensSansSpace} ->
+			match_type({finish, ArgAcc, TypeName}, ProtoNode, TokensSansSpace, Options);
+		{_, _, [{syntax_close, _, list} | _] = TokensSansSpace} ->
+			match_type({finish, ArgAcc, TypeName}, ProtoNode, TokensSansSpace, Options);
+		{_, _, [{syntax_close, _, subexpression} | _] = TokensSansSpace} ->
+			match_type({finish, ArgAcc, TypeName}, ProtoNode, TokensSansSpace, Options);
+		{false, _, _} ->
+			lex_error(hd(Tokens), space, {match_type, {gather_args, ArgAcc, TypeName, ProtoNode}});
+		{_, Comments, [{identifier_ignored, L, Name} | Tail ]} ->
+			Node = milang_ast:ast_node(Comments, L, {identifier_ignored, Name}),
+			NewAcc = [ Node | ArgAcc],
+			match_type({gather_args, NewAcc, TypeName}, ProtoNode, Tail, Options);
+		{_, Comments, [{identifier_bound, L, Name} | Tail]} ->
+			Node = milang_ast:ast_node(Comments, L, {identifier_bound, Name}),
+			NewAcc = [ Node | ArgAcc],
+			match_type({gather_args, NewAcc, TypeName}, ProtoNode, Tail, Options);
+		{_, Comments, [{literal_string, L, S} | Tail]} ->
+			Node = milang_ast:ast_node(Comments, L, {literal_string, S}),
+			NewAcc = [ Node | ArgAcc],
+			match_type({gather_args, NewAcc, TypeName}, ProtoNode, Tail, Options);
+		{_, Comments, [{literal_integer, L, N} | Tail]} ->
+			Node = milang_ast:ast_node(Comments, L, {literal_integer, N}),
+			NewAcc = [ Node | ArgAcc],
+			match_type({gather_args, NewAcc, TypeName}, ProtoNode, Tail, Options);
+		{_, Comments, [{literal_float, L, N} | Tail]} ->
+			Node = milang_ast:ast_node(Comments, L, {literal_float, N}),
+			NewAcc = [ Node | ArgAcc],
+			match_type({gather_args, NewAcc, TypeName}, ProtoNode, Tail, Options);
+		{_, Comments, [{identifier_type, L, Name} | Tail]} ->
+			SubProto = milang_ast:ast_node(Comments, L),
+			{ok, Node, Tail} = match_type({finish, [], Name}, SubProto, Tail, Options),
+			NewAcc = [ Node | ArgAcc],
+			match_type({gather_args, NewAcc, TypeName}, ProtoNode, Tail, Options);
+		{_, Comments, [{syntax_open, L, list} | Tail]} ->
+			MatchListProtoNode = milang_ast:ast_node(Comments, L),
+			case match_list(MatchListProtoNode, Tail, Options) of
+				{ok, Node, NewTokens} ->
+					NewAcc = [ Node | ArgAcc],
+					match_type({gather_args, NewAcc, TypeName}, ProtoNode, NewTokens, Options);
+				Error ->
+					Error
+			end;
+		{_, Comments, [{syntax_open, L, subexpression} | Tail]} ->
+			MatchSubProtoNode = milang_ast:ast_node(L, Comments),
+			case match_sub(MatchSubProtoNode, Tail, Options) of
+				{ok, Node, NewTokens} ->
+					NewAcc = [Node | ArgAcc],
+					match_type({gather_args, NewAcc, TypeName}, ProtoNode, NewTokens, Options);
+				Error ->
+					Error
+			end;
+		[E | _] ->
+			lex_error(E, [identifier_bound, identifier_type, identifier_ignored, literal_float, literal_string, literal_integer, syntax_open_list], {match_head, {start, ProtoNode}})
+	end;
+
+match_type({finish, Args, Name}, ProtoNode, Tokens, _Options) ->
+	Node = milang_ast:transform_data(fun(_) ->
+		{match_type, Name, lists:reverse(Args)}
+	end, ProtoNode),
+	{ok, Node, Tokens}.
+
+match_sub(ProtoNode, Tokens, Options) ->
+	match_head({part, fun syntax_close_subexpression/4}, ProtoNode, Tokens, Options).
+
+match_list(ProtoNode, Tokens, Options) ->
+	match_list({maybe_next_element, []}, ProtoNode, Tokens, Options).
+
+match_list({maybe_next_element, Acc}, ProtoNode, Tokens, Options) ->
+	{_, Comments, TokensSansSpace} = space(Tokens),
+	case TokensSansSpace of
+		[{syntax_element_seperator, L, _} | Tail] ->
+			match_list({next_element, L, Comments, Acc}, ProtoNode, Tail, Options);
+		[{syntax_cons, _, _} | Tail] ->
+			match_list({tail_binding, Comments, Acc}, ProtoNode, Tail, Options);
+		[{syntax_close, _, list} | _Tail] ->
+			match_list({finish, undefined, Acc}, ProtoNode, TokensSansSpace, Options);
+		_ ->
+			lex_error(hd(TokensSansSpace), [syntax_element_seperator, syntax_close_list, syntax_cons], {match_list, {maybe_next_element, Acc, ProtoNode}})
+	end;
+
+match_list({next_element, L, Comments, Acc}, ProtoNode, Tokens, Options) ->
+	Finish = fun list_match_element/4,
+	case match_head({part, Finish}, milang_ast:ast_node(L, Comments), Tokens, Options) of
+		{ok, Node, NewTokens} ->
+			match_list({maybe_next_element, [ Node | Acc]}, ProtoNode, NewTokens, Options);
+		Error ->
+			Error
+	end;
+
+match_list({tail_binding, Comments, Acc}, ProtoNode, Tokens, Options) ->
+	case space(Tokens) of
+		{false, _, _} ->
+			lex_error(hd(Tokens), space, {match_list, {tail_binding, Comments, Acc, ProtoNode}});
+		{true, MoreComments, [{identifier_bound, L, Name} | Tail]} ->
+			Node = milang_ast:ast_node(L, [Comments, MoreComments], {identifier_bound, Name}),
+			match_list({finish, Node, Acc}, ProtoNode, Tail, Options);
+		{true, MoreComments, [{identifier_ignored, L, Name} | Tail]} ->
+			Node = milang_ast:ast_node(L, [Comments, MoreComments], {identifier_ignored, Name}),
+			match_list({finish, Node, Acc}, ProtoNode, Tail, Options);
+		{_, _, TokensSansSpace} ->
+			lex_error(hd(TokensSansSpace), [identifier_bound, identifier_ignored], {match_list, {tail_binding, Comments, Acc, ProtoNode}})
+	end;
+
+match_list({finish, TailBinding, Heads} = State, ProtoNode, Tokens, _Options) ->
+	{_, _Comments, TokensSansSpace} = space(Tokens),
+	case TokensSansSpace of
+		[{syntax_close, _, list} | Tail] ->
+			NewData = case TailBinding of
+				undefined ->
+					{match_list, lists:reverse(Heads)};
+				_ ->
+					{match_list_head, lists:reverse(Heads), TailBinding}
+			end,
+			Node = milang_ast:transform_data(fun(_) ->
+				NewData
+			end, ProtoNode),
+			{ok, Node, Tail};
+		[H | _] ->
+			lex_error(H, syntax_close_list, {match_list, State })
+	end.
+
+syntax_implies(Tokens, Context, Node, _Options) ->
+	{_, _Comments, TokensSansSpace} = space(Tokens),
+	case TokensSansSpace of
+		[{syntax_implies, _, _} | Tail] ->
+			{ok, Node, Tail};
+		[H | _] ->
+			lex_error(H, syntax_implies, {Context, {syntax_implies, Node}})
+	end.
+
+syntax_close_subexpression(Tokens, Context, Node, _Options) ->
+	{_, _Comments, TokensSansSpace} = space(Tokens),
+	case TokensSansSpace of
+		[{syntax_close, _, subexpression} | Tail] ->
+			{ok, Node, Tail};
+		[H | _] ->
+			lex_error(H, syntax_close_subexpression, {Context, {syntax_close_subexpression, Node}})
+	end.
+
+list_match_element(Tokens, Context, Node, _Options) ->
+	{_, _Comments, TokensSansSpace} = space(Tokens),
+	case TokensSansSpace of
+		[{syntax_element_seperator, _, _} | _Tail] ->
+			{ok, Node, Tokens};
+		[{syntax_cons, _, _} | _] ->
+			{ok, Node, Tokens};
+		[{syntax_close, _, list} | _] ->
+			{ok, Node, Tokens};
+		[H | _] ->
+			lex_error(H, [syntax_element_seperator, syntax_conse, syntax_close_list], {Context, {list_match_element, Node}})
+	end.
+
 
 expression_function(ProtoNode, Tokens, Options) ->
 	expression_function({arg_or_done, []}, ProtoNode, Tokens, Options).
@@ -1379,6 +1911,8 @@ expression_call({space_or_done, Name, Args, ProtoNode}, Tokens, Options) ->
 	case space(Tokens) of
 		{_, _, [{syntax_infix_indicator, _, _} | _]} ->
 			expression_call({finish, Name, Args, ProtoNode}, Tokens, Options);
+		{_, _, [{keyword, _, _} | _]} ->
+			expression_call({finish, Name, Args, ProtoNode}, Tokens, Options);
 		{false, _, TokensSansSpace} ->
 			?LOG_DEBUG("guess we're done: ~p", [hd(TokensSansSpace)]),
 			expression_call({finish, Name, Args, ProtoNode}, Tokens, Options);
@@ -1413,6 +1947,14 @@ expression_call({arg, Comments, Name, Args, ProtoNode}, Tokens, Options) ->
 			Node = milang_ast:ast_node(L, Comments, milang_ast_call:new(Data, [])),
 			NewArgs = [ Node | Args ],
 			expression_call({space_or_done, Name, NewArgs, ProtoNode}, Tail, Options);
+		[{syntax_open, _, subexpression} | _] ->
+			case sub_expression(Comments ++ Tokens, Options) of
+				{ok, Node, NewTokens} ->
+					NewArgs = [ Node | Args ],
+					expression_call({space_or_done, Name, NewArgs, ProtoNode}, NewTokens, Options);
+				Error ->
+					Error
+			end;
 		_ ->
 			ArgsProper = lists:reverse(Args),
 			Body = milang_ast_call:new(Name, ArgsProper),
@@ -1421,8 +1963,11 @@ expression_call({arg, Comments, Name, Args, ProtoNode}, Tokens, Options) ->
 	end;
 
 expression_call({list, ListProtoNode, Name, Args, ProtoNode}, Tokens, Options) ->
-	case generic_list(ListProtoNode, Tokens, Options) of
-		{ok, ListNode, NewTokens} ->
+	case generic_list(Tokens, Options, fun expression/2) of
+		{ok, ListItems, NewTokens} ->
+			ListNode = milang_ast:transform_data(fun(_) ->
+				{literal_list, ListItems}
+			end, ListProtoNode),
 			expression_call({space_or_done, Name, [ ListNode | Args], ProtoNode}, NewTokens, Options);
 		Error ->
 			Error

@@ -3,18 +3,18 @@ module TypeError.
 expose spec func_return = List String -> Integer.
 let func_return = function _ -> "hello"..
 
-expose spec match_clauses = Maybe a -> Maybe a
+expose spec match_clauses = Maybe a -> Maybe a.
 let match_clauses = function maybe ->
 	match maybe with
-		Just "hi" ->
-			Just "bye".
-		Just 3 ->
-			Just 5.
+		Some "hi" ->
+			Some "bye".
+		Some 3 ->
+			Some 5.
 		_ ->
 			maybe.
-	..
+	...
 
 expose spec main = List String -> Integer.
 let main = function _ ->
 	0
-.
+..

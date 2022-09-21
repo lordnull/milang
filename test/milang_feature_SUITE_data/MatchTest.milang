@@ -6,13 +6,16 @@ let ln = System.Print.ln.
 
 let literal_integer = function n ->
 	match n with
-		_ when n < 0 ->
-			"negative".
 		0 ->
 			"0".
 		_ ->
-			"positive".
-	..
+			match n '< 0 with
+				True ->
+					"negative".
+				False ->
+					"positive".
+			..
+	...
 
 let literal_string = function s ->
 	match s with
@@ -22,19 +25,19 @@ let literal_string = function s ->
 			"farewell".
 		_ ->
 			"whatever".
-	..
+	...
 
 let list_match = function l ->
 	match l with
 		[] ->
 			"empty".
-		_ :: [] ->
+		[, _ ] ->
 			"one".
-		_ :: _ :: [] ->
+		[,_ , _ ] ->
 			"two".
-		_ :: _tail ->
+		[,_ ,, _tail ] ->
 			"many".
-	..
+	...
 
 type Fork a b = [
 	, Left a
@@ -47,17 +50,17 @@ let type_match = function f ->
 			"left".
 		Right _ ->
 			"right".
-	..
+	...
 
 let assert = function expectation expression ->
 	match expression with
 		expectation ->
 			Nothing.
 		_ ->
-			Just "mismatch".
-	..
+			Some "mismatch".
+	...
 
-let assertions = function ->	[
+let assertions = function -> [
 	, assert "negative" (literal_integer -5)
 	, assert "negative" (literal_integer -1)
 	, assert "0" (literal_integer 0)
@@ -76,20 +79,20 @@ let assertions = function ->	[
 	, assert "left" (type_match (Left 3))
 	, assert "left" (type_match (Left "hi"))
 	, assert "right" (type_match (Right False))
-	, assert "right" (type_match (Right, []))
-	].
+	, assert "right" (type_match (Right []))
+	]..
 
 let count_fold = function assert_res count ->
 	match assert_res with
 		Nothing -> count.
-		Just msg ->
+		Some msg ->
 			ln msg
-			| always (count + 1).
-	..
+			'| always (count '+ 1).
+	...
 
 let count_fails = function ->
-	List.foldl count_fold 0 assertions.
+	List.foldl count_fold 0 assertions..
 
 expose spec main = List String -> Integer.
 let main = function _ ->
-	count_fails.
+	count_fails..

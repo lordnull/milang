@@ -22,6 +22,7 @@
 -type syntax_infix_indicator() :: {syntax_infix_indicator, milang_ast:location(), unicode:chardata()}.
 -type syntax_keyword() :: {syntax_keyword, milang_ast:location(), 'when' | 'exposing' | 'match' | 'as' | 'func'}.
 -type syntax_dot() :: {syntax_dot, milang_ast:location(), unicode:chardata()}.
+-type syntax_cons() :: {syntax_cons, milang_ast:location(), unicode:chardata()}.
 -type syntax_element_seperator() :: {syntax_element_seperator, milang_ast:location(), unicode:chardata()}.
 -type syntax_open(T) :: {syntax_open, milang_ast:location(), T}.
 -type syntax_close(T) :: {syntax_close, milang_ast:location(), T}.
@@ -47,6 +48,7 @@
 	| syntax_infix_right()
 	| syntax_keyword()
 	| syntax_dot()
+	| syntax_cons()
 	| syntax_element_seperator()
 	| syntax_open_list()
 	| syntax_close_list()
@@ -73,8 +75,9 @@
 	, keyword_function/0
 	, keyword_match/0
 	, keyword_when/0
+	, keyword_with/0
 	, keyword_class/0
-	, keyword_implements/0
+	, keyword_teach/0
 	, keyword_as/0
 	, whitespace/0
 	, comment/0
@@ -114,9 +117,10 @@ tokens() ->
 		, keyword_function()
 		, keyword_match()
 		, keyword_when()
+		, keyword_with()
 		, keyword_class()
 		, keyword_as()
-		, keyword_implements()
+		, keyword_teach()
 		, keyword_expose_all()
 		, keyword_expose()
 		, whitespace()
@@ -130,6 +134,7 @@ tokens() ->
 		, syntax_infix_right()
 		, syntax_infix_indicator()
 		, syntax_dot()
+		, syntax_cons()
 		, syntax_element_seperator()
 		, syntax_open_list()
 		, syntax_close_list()
@@ -146,15 +151,30 @@ tokens() ->
 		E ++ [End]
 	end).
 
-keyword(AsAtom) ->
-	FollowedBy = parse:first_of([ comment(), whitespace() ]),
+grammer_space(AsAtom) ->
+	FollowedBy = parse:first_of(
+		[ comment()
+		, whitespace()
+		, eof()
+		, parse:character($.)
+		, parse:string(<<",,">>)
+		, parse:character($,)
+		, parse:character($()
+		, parse:character($))
+		, parse:character($[)
+		, parse:character($])
+		, parse:character(${)
+		, parse:character($})
+		]),
 	Test = parse:test(FollowedBy),
 	Keyword = parse:string(atom_to_binary(AsAtom, utf8)),
 	Series = parse:series([Keyword, Test]),
-	Mapped = parse:map(Series, fun([_, _]) ->
+	parse:map(Series, fun([_, _]) ->
 		AsAtom
-	end),
-	parse:tag(keyword, Mapped).
+	end).
+
+keyword(AsAtom) ->
+	parse:tag(keyword, grammer_space(AsAtom)).
 
 keyword_module() ->
 	keyword(module).
@@ -177,11 +197,14 @@ keyword_match() ->
 keyword_when() ->
 	keyword('when').
 
+keyword_with() ->
+	keyword('with').
+
 keyword_class() ->
 	keyword('class').
 
-keyword_implements() ->
-	keyword('implements').
+keyword_teach() ->
+	keyword('teach').
 
 keyword_expose() ->
 	keyword('expose').
@@ -296,7 +319,7 @@ literal_integer() ->
 
 -spec syntax_implies() -> parse:parser(term(), syntax_implies()).
 syntax_implies()  ->
-	parse:tag(syntax_implies, parse:string(<<"->">>)).
+	parse:tag(syntax_implies, grammer_space('->')).
 
 -spec syntax_infix_left() -> parse:parser(term(), syntax_infix_left()).
 syntax_infix_left() ->
@@ -313,7 +336,10 @@ syntax_infix_indicator() ->
 
 -spec syntax_dot() -> parse:parser(term(), syntax_dot()).
 syntax_dot() ->
-	parse:tag(syntax_dot, parse:character($.)).
+	parse:tag(syntax_dot, grammer_space('.')).
+
+syntax_cons() ->
+	parse:tag(syntax_cons, parse:string(<<",,">>)).
 
 -spec syntax_element_seperator() -> parse:parser(term(), syntax_element_seperator()).
 syntax_element_seperator() ->
@@ -376,7 +402,7 @@ syntax_close_subexpression() ->
 
 -spec syntax_bind() -> parse:parser(term(), syntax_bind()).
 syntax_bind() ->
-	parse:tag(syntax_bind, parse:character($=)).
+	parse:tag(syntax_bind, grammer_space('=')).
 
 -spec eof() -> parse:parser(term(), eof()).
 eof() ->
