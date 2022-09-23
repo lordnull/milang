@@ -87,7 +87,7 @@ let count_fold = function assert_res count ->
 		Nothing -> count.
 		Some msg ->
 			ln msg
-			'| always (count '+ 1).
+			'|> always (count '+ 1).
 	...
 
 let count_fails = function ->

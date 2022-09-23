@@ -105,7 +105,7 @@ record_test(Cfg) ->
 	end.
 
 match_test(Cfg) ->
-	milang_log:set_log_level(debug),
+	milang_log:set_log_level(info),
 	DataDir = proplists:get_value(data_dir, Cfg),
 	PrivDir = proplists:get_value(priv_dir, Cfg),
 	{ok, Tokens} = milang_parse:file(filename:join([DataDir, "MatchTest.milang"])),

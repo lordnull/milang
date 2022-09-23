@@ -100,17 +100,31 @@ build_beam(ModuleName, ErlSrc, BeamDir) ->
 	SrcPath = filename:join(ErlSrc, ErlBaseName),
 	MaybeBeamFile = beam_file(MaybeObjectCode, ModuleName),
 	RebuiltBeam = rebuild_beam_if_needed(SrcPath, MaybeBeamFile, MaybeObjectCode, BeamDir, ModuleName),
-	?LOG_DEBUG("Module hunt for ~s:~n"
-		"	Erl File: ~s~n"
-		"	beam file ~p~n"
-		"	rebuilt: ~p~n"
-		, [ModuleName, SrcPath, MaybeBeamFile, RebuiltBeam]),
 	case old_or_rebuilt(MaybeObjectCode, RebuiltBeam) of
 		{error, cannot_find_module} ->
+			?LOG_ERROR("Unable to find module.~n"
+				"    Module: ~s~n"
+				"    Erl file: ~s~n"
+				"    beam file: ~p~n"
+				"    rebuilt: ~p"
+				, [ModuleName, SrcPath, MaybeBeamFile, RebuiltBeam]),
 			error({cannot_find_module, ModuleName});
 		{error, Wut} ->
+			?LOG_ERROR("error rebuilding or loading module.~n"
+				"    Module: ~s~n"
+				"    Erl file: ~s~n"
+				"    beam file: ~p~n"
+				"    rebuilt: ~p~n"
+				"    Error: ~p"
+				, [ModuleName, SrcPath, MaybeBeamFile, RebuiltBeam, Wut]),
 			{error, Wut};
 		error ->
+			?LOG_ERROR("Unable to load object code.~n"
+				"    Module: ~s~n"
+				"    Erl file: ~s~n"
+				"    beam file: ~p~n"
+				"    rebuilt: ~p"
+				, [ModuleName, SrcPath, MaybeBeamFile, RebuiltBeam]),
 			{error, cannot_load_object_code, ModuleName};
 		ObjCode ->
 			ObjCode

@@ -19,7 +19,7 @@ create_module(AST, WriteFun) ->
 	ok = WriteFun(ModuleDeclaration),
 	ExportDeclaration = export_declaration(AST),
 	ok = WriteFun(ExportDeclaration),
-	write_functions(AST, WriteFun).
+	write_functions(AST, milang_scope:new(), WriteFun).
 
 module_declaration(AST) ->
 	Filter = fun(Node) ->
@@ -73,70 +73,114 @@ as_export_entry(Node) ->
 			false
 	end.
 
-write_functions([], _WriteFun) ->
+write_functions([], _Symbols, _WriteFun) ->
 	ok;
-write_functions([ AST | Tail], WriteFun) ->
-	ok = write_function(AST, WriteFun),
-	write_functions(Tail, WriteFun).
+write_functions([ AST | Tail], Symbols, WriteFun) ->
+	NewSymbols = write_function(AST, Symbols, WriteFun),
+	write_functions(Tail, NewSymbols, WriteFun).
 
-write_function(AST, WriteFun) ->
+write_function(AST, Symbols, WriteFun) ->
 	Type = milang_ast:type(AST),
-	write_function(Type, AST, WriteFun).
+	write_function(Type, AST, Symbols, WriteFun).
 
-write_function({ok, binding}, AST, WriteFun) ->
+write_function({ok, import}, _AST, Symbols, _WriteFun) ->
+	Symbols;
+write_function({ok, module}, _AST, Symbols, _WriteFun) ->
+	Symbols;
+write_function({ok, spec}, _AST, Symbols, _WriteFun) ->
+	Symbols;
+write_function({ok, binding}, AST, Symbols, WriteFun) ->
 	Data = milang_ast:data(AST),
 	MatchNode = milang_ast_binding:match(Data),
 	MatchData = milang_ast:data(MatchNode),
 	case MatchData of
 		{_, Name} when is_binary(Name) ->
 			WriteFun([io_lib:format("'~s'() ->\n", [Name])]),
+			{ok, NewSymbols} = milang_scope:insert(Name, function, Symbols),
 			Expression = milang_ast_binding:expression(Data),
-			write_function_body(Expression, WriteFun);
+			ok = write_function_body(Expression, milang_scope:add_scope(NewSymbols), WriteFun),
+			NewSymbols;
 		_ ->
-			ok
+			Symbols
 	end;
-write_function(_Type, AST, _WriteFun) ->
-	?LOG_DEBUG("nyi writing the ast as function: ~p", [AST]),
-	ok.
+write_function({ok, type}, AST, Symbols, WriteFun) ->
+	Data = milang_ast:data(AST),
+	case milang_ast_type:constructors(Data) of
+		[] ->
+			{_, Name} = NameData = milang_ast:data(milang_ast_type:name(Data)),
+			TypeName = as_function_name(NameData),
+			{ok, NewSymbols} = milang_scope:insert(Name, type, Symbols),
+			ArgNodes = milang_ast_type:args(Data),
+			ArgNames = lists:map(fun(ArgNode) ->
+				extract_match(milang_ast:data(ArgNode))
+			end, ArgNodes),
+			JoinedArgs = lists:join(", ", ArgNames),
+			ResultTuple = type_tuple(TypeName, ArgNames),
+			Fun = io_lib:format("fun( ~s ) -> ~s end~n", [JoinedArgs, ResultTuple]),
+			FunctionBody = io_lib:format("milang_curry:stack(~s).~n", [Fun]),
+			Function = io_lib:format("~s() -> ~s", [TypeName, FunctionBody]),
+			WriteFun(Function),
+			NewSymbols;
+		Constructors ->
+			write_constructors(Constructors, Symbols, WriteFun)
+	end;
 
-write_function_body(Node, WriteFun) ->
+write_function(_Type, AST, Symbols, _WriteFun) ->
+	?LOG_ERROR("nyi writing the ast as function: ~p", [AST]),
+	Symbols.
+
+write_function_body(Node, Symbols, WriteFun) ->
 	Type = milang_ast:type(Node),
 	Data = milang_ast:data(Node),
-	write_function_body(Type, Data, WriteFun).
+	write_function_body(Type, Data, Symbols, WriteFun).
 
-write_function_body({ok, call}, Call, WriteFun) ->
+write_function_body({ok, call}, Call, Symbols, WriteFun) ->
 	Args = lists:map(fun(E) ->
-		write_expression(E)
+		write_expression(E, Symbols)
 	end, milang_ast_call:args(Call)),
 	StackBuilder = case milang_ast_call:function(Call) of
 		{identifier_bound, #{ local := L, module := M}} ->
 			io_lib:format("'~s':'~s'()", [M, L]);
 		{identifier_bound, L} ->
-			io_lib:format("'~s'()", [L]);
+			{ok, NameType} = milang_scope:lookup(L, Symbols),
+			case NameType of
+				function ->
+					io_lib:format("'~s'()", [L]);
+				match ->
+					FunName = extract_match({identifier_bound, L}),
+					io_lib:format("~s()", [FunName])
+			end;
 		Call ->
+			?LOG_ERROR("Silently skipping this call: ~p", [Call]),
 			""
 	end,
 	StackArgsJoined = lists:join($,, Args),
 	ToWrite = io_lib:format("milang_curry:call(~s, [~s]).~n~n", [StackBuilder, StackArgsJoined]),
 	WriteFun(ToWrite);
-write_function_body({ok, function}, Function, WriteFun) ->
+write_function_body({ok, function}, Function, Symbols, WriteFun) ->
 	Args = milang_ast_function:args(Function),
+	SymbolsWithArgs = lists:foldl(fun(ArgNode, SymbolAcc) ->
+		ArgData = milang_ast:data(ArgNode),
+		case ArgData of
+			{identifier_bound, Name} ->
+				{ok, NewScope} = milang_scope:insert(Name, match, SymbolAcc),
+				NewScope;
+			{identifier_ignored, _} ->
+				SymbolAcc;
+			_ ->
+				?LOG_ERROR("Skipping adding arg data ~p to symbols", [ArgData]),
+				SymbolAcc
+		end
+	end, Symbols, Args),
 	Binds = milang_ast_function:binds(Function),
 	Expression = milang_ast_function:expression(Function),
 	FixedArgs = lists:map(fun extract_match/1, Args),
 	JoinedArgs = lists:join($,, FixedArgs),
 
-	PartialFixedBinds = lists:map(fun(B) ->
-		Data = milang_ast:data(B),
-		MatchNode = milang_ast_binding:match(Data),
-		ExprNode = milang_ast_binding:expression(Data),
-		{extract_match(MatchNode), write_expression(ExprNode)}
-	end, Binds),
-	FixedBinds = lists:map(fun({Match, Expr}) ->
-		io_lib:format("~s = ~s", [Match, Expr])
-	end, PartialFixedBinds),
+	{BindsStrs, SymbolsWithBinds} = write_bindings(Binds, SymbolsWithArgs),
 
-	FixedExpr = write_expression(Expression),
+	FixedBinds = lists:join(",\n", BindsStrs),
+	FixedExpr = write_expression(Expression, SymbolsWithBinds),
 
 	FixedBody = case FixedBinds of
 		[] -> FixedExpr;
@@ -146,47 +190,167 @@ write_function_body({ok, function}, Function, WriteFun) ->
 	ToWrite = io_lib:format("milang_curry:stack(~s).~n~n", [FunChars]),
 	WriteFun(ToWrite);
 
-write_function_body(_Type, Expression, _WriteFun) ->
-	?LOG_DEBUG("not yet implmented as function body: ~p", [Expression]),
+write_function_body(_Type, Expression, _Symbols, _WriteFun) ->
+	% TODO implement writing a match expression (and other things) out.
+	?LOG_ERROR("not yet implmented as function body: ~p", [Expression]),
 	ok.
 
-write_expression(Expression) ->
+write_bindings(Binds, Symbols) ->
+	lists:mapfoldl(fun(B, SymbolsAcc) ->
+		write_binding(B, SymbolsAcc)
+	end, Symbols, Binds).
+
+write_binding(Binding, Symbols) ->
+	Data = milang_ast:data(Binding),
+	MatchNode = milang_ast_binding:match(Data),
+	ExprNode = milang_ast_binding:expression(Data),
+	MatchStr = extract_match(MatchNode),
+	ExprStr = write_expression(ExprNode, Symbols),
+	Str = io_lib:format("~s = ~s", [MatchStr, ExprStr]),
+	{ok, NewSymbols} = case milang_ast:data(MatchNode) of
+		{identifier_bound, N} ->
+			milang_scope:insert(N, match, Symbols);
+		Wut ->
+			?LOG_ERROR("Didn't know how to write the binding ~p", [Wut]),
+			{ok, Symbols}
+	end,
+	{Str, NewSymbols}.
+
+write_expression(Expression, Symbols) ->
 	Type = milang_ast:type(Expression),
 	Data = milang_ast:data(Expression),
-	write_expression(Type, Data).
+	write_expression(Type, Data, Symbols).
 
 %write_expression(infix_series, Data) ->
 	% TODO change infix_series into infix_tree during compile step. This will
 	% happen after the lexer pass, before the type checker. And because the
 	% type checker happens before this step (or will, at least), it will
 	% also be here.
-write_expression({ok, infix_tree}, Tree) ->
+write_expression({ok, infix_tree}, Tree, Symbols) ->
 	Notation = milang_ast_infix_tree:notation(Tree),
 	Left = milang_ast_infix_tree:left(Tree),
 	Right = milang_ast_infix_tree:right(Tree),
 	FunctionChars = as_function_name(milang_ast_infix_notation:function(Notation)),
 	StackBuilder = [FunctionChars, "()"],
-	LeftChars = write_expression(Left),
-	RightChars = write_expression(Right),
+	LeftChars = write_expression(Left, Symbols),
+	RightChars = write_expression(Right, Symbols),
 	curry_call(StackBuilder, [LeftChars, RightChars]);
 
-write_expression({ok, call}, Call) ->
+write_expression({ok, call}, Call, Symbols) ->
 	Function = milang_ast_call:function(Call),
+	TrueFunctionName = case Function of
+		{identifier_bound, N} -> N;
+		{identifier_type, N} -> N;
+		_ when is_binary(Function) -> Function
+	end,
 	Args = milang_ast_call:args(Call),
-	StackBuilder = [as_function_name(Function), "()"],
-	ArgsChars = lists:map(fun write_expression/1, Args),
-	curry_call(StackBuilder, ArgsChars);
+	Symbol = milang_scope:lookup(TrueFunctionName, Symbols),
+	case {Symbol, Args} of
+		{{ok, match}, []} ->
+			extract_match(Function);
+		_ ->
+			StackBuilder = [as_function_name(Function), "()"],
+			ArgsChars = lists:map(fun(ArgNode) ->
+				write_expression(ArgNode, Symbols)
+			end, Args),
+			curry_call(StackBuilder, ArgsChars)
+	end;
 
-write_expression({ok, literal_string}, {literal_string, String}) ->
+write_expression({ok, literal_string}, {literal_string, String}, _Symbols) ->
 	io_lib:format("( ~p )", [ String ]);
 
-write_expression({ok, literal_integer}, {literal_integer, N}) ->
+write_expression({ok, literal_integer}, {literal_integer, N}, _Symbols) ->
 	io_lib:format(" ( ~p ) ", [N]);
 
-write_expression(_, Data) ->
-	?LOG_DEBUG("not yet implemented as pure expression: ~p", [Data]),
+write_expression({ok, match}, Match, Symbols) ->
+	ExpressionNode = milang_ast_match:expression(Match),
+	ClauseNodes = milang_ast_match:clauses(Match),
+	Expression = write_expression(ExpressionNode, Symbols),
+	Clauses = lists:map(fun(ClauseNode) ->
+		write_expression(ClauseNode, Symbols)
+	end, ClauseNodes),
+	JoinedClauses = lists:join(";\n", Clauses),
+	io_lib:format("case ( ~s ) of~n~s~nend~n", [Expression, JoinedClauses]);
+
+write_expression({ok, match_clause}, Clause, Symbols) ->
+	Match = milang_ast_match_clause:match(Clause),
+	Binds = milang_ast_match_clause:binds(Clause),
+	Expression = milang_ast_match_clause:expression(Clause),
+	MatchStr = extract_match(Match),
+	{ok, SymbolsWithMatch} = add_symbols_from_match(milang_ast:data(Match), milang_scope:add_scope(Symbols)),
+	{BindsStrs, SymbolsWithBinds} = write_bindings(Binds, SymbolsWithMatch),
+	ExpressionStr = write_expression(Expression, SymbolsWithBinds),
+	JoinedBindings = lists:join(",\n", BindsStrs),
+	io_lib:format("    ~s ->~n~s~n~s", [MatchStr, JoinedBindings, ExpressionStr]);
+
+write_expression({ok, literal_list}, ListLiteral, Symbols) ->
+	{literal_list, ElementNodes} = ListLiteral,
+	ElementStrs = lists:map(fun(E) ->
+		write_expression(E, Symbols)
+	end, ElementNodes),
+	Joined = lists:join("\n, ", ElementStrs),
+	["[ ", Joined, " ]"];
+
+write_expression({ok, identifier_bound}, {identifier_bound, Name}, Symbols) ->
+	case milang_scope:lookup(Name, Symbols) of
+		{error, not_found} ->
+			?LOG_ERROR("Did not find ~s in the symbols table ~p", [Name, Symbols]),
+			"";
+		{ok, function} ->
+			curry_call([$', Name, $', "()"], []);
+		{ok, match} ->
+			extract_match({identifier_bound, Name});
+		Else ->
+			?LOG_ERROR("unsure how to write identifier_bound ~s with type ~p as an expression.", [Name, Else]),
+			""
+	end;
+
+write_expression(_, Data, _Symbols) ->
+	?LOG_ERROR("not yet implemented as pure expression: ~p", [Data]),
 	"".
 
+write_constructors(Constructors, Symbols, WriteFun) ->
+	lists:foldl(fun(C, SymbolAcc) ->
+		write_constructor(C, SymbolAcc, WriteFun)
+	end, Symbols, Constructors).
+
+write_constructor(ConstructorNode, Symbols, WriteFun) ->
+	Data = milang_ast:data(ConstructorNode),
+	NameNode = milang_ast_constructor:name(Data),
+	ArgNodes = milang_ast_constructor:args(Data),
+	Name = as_function_name(milang_ast:data(NameNode)),
+	{_, TrueName} = milang_ast:data(NameNode),
+	{ok, NewSymbols} = milang_scope:insert(TrueName, constructor, Symbols),
+	Args = lists:map(fun(ArgNode) ->
+		case milang_ast:type_simply(ArgNode) of
+			identifier_bound ->
+				extract_match(milang_ast:data(ArgNode));
+			identifier_type ->
+				extract_match(milang_ast:data(ArgNode));
+			concrete ->
+				concrete_as_variable(ArgNode)
+		end
+	end, ArgNodes),
+	JoinedArgs = lists:join(", ", Args),
+	Tuple = type_tuple(Name, Args),
+	Fun = io_lib:format("fun( ~s ) -> ~s end", [JoinedArgs, Tuple]),
+	Curried = curry_call(Fun, []),
+	FullFunction = io_lib:format("~s() -> ~s .~n~n", [Name, Curried]),
+	WriteFun(FullFunction),
+	NewSymbols.
+
+type_tuple(TypeName, []) ->
+	TypeName;
+type_tuple(TypeName, ArgNames) ->
+	Joined = lists:join(", ", [TypeName | ArgNames]),
+	io_lib:format("{ ~s }", [Joined]).
+
+concrete_as_variable(Node) ->
+	{Line, Col} = milang_ast:location(Node),
+	Data = milang_ast:data(Node),
+	NameNode = milang_ast_concrete:name(Data),
+	NameNodeBase = extract_match(milang_ast:data(NameNode)),
+	io_lib:format("~s_~p_~p", [NameNodeBase, Line, Col]).
 
 curry_call(StackBuilderChars, Args) ->
 	StackBuilder = ["( ", StackBuilderChars, " )"],
@@ -210,7 +374,7 @@ as_function_name(#{ module := M, local := L}) ->
 as_function_name(L) when is_binary(L) ->
 	["'", L, "'"];
 as_function_name(Name) ->
-	?LOG_DEBUG("Likely an invalid function name: ~p", [Name]),
+	?LOG_ERROR("Likely an invalid function name: ~p", [Name]),
 	"'Core':'never'".
 
 extract_match({identifier_bound, #{ module := M, local := L }}) ->
@@ -218,15 +382,60 @@ extract_match({identifier_bound, #{ module := M, local := L }}) ->
 extract_match({identifier_bound, L}) ->
 	extract_match(unicode:characters_to_binary(["V_", L]));
 extract_match({identifier_ignored, _}) ->
-	$_;
+	[$_];
 extract_match({identifier_type, #{ module := M, local := L}}) ->
 	extract_match(unicode:characters_to_binary(["T_", M, $., L]));
+extract_match({identifier_type, <<"True">>}) ->
+	<<"'true'">>;
+extract_match({identifier_type, <<"False">>}) ->
+	<<"'false'">>;
 extract_match({identifier_type, L}) ->
 	extract_match(unicode:characters_to_binary(["T_", L]));
 extract_match(Binary) when is_binary(Binary) ->
 	{ok, BadBoyFinder} = re:compile("[^a-zA-Z0-9_]+", [unicode, ucp]),
 	FirstRun = re:run(Binary, BadBoyFinder, []),
 	mutilate_name(Binary, BadBoyFinder, FirstRun);
+extract_match({match_type, ConstructorName, ConstructorMatches}) when is_binary(ConstructorName) ->
+	% it's a local constructor, so we need to build the match manually.
+	NameMatch = extract_match({identifier_type, ConstructorName}),
+	case ConstructorMatches of
+		[] ->
+			NameMatch;
+		_ ->
+			Args = lists:map(fun extract_match/1, ConstructorMatches),
+			JoinedAll = lists:join(", ", [NameMatch | Args]),
+			io_lib:format("{ ~s }", [JoinedAll])
+	end;
+extract_match({match_type, #{ local := LocalStr, module := ModuleStr }, ConstructorMatches}) ->
+	% hopefully the compiler has built the beam we need to actually do the
+	% match constructor for us. I'm not worried about using up the atom space
+	% because this is not code meant to be on a long running server.
+	Local = binary_to_atom(LocalStr, utf8),
+	Module = binary_to_atom(ModuleStr, utf8),
+	Args = lists:map(fun extract_match/1, ConstructorMatches),
+	RawTuple = erlang:apply(Module, Local, Args),
+	[HeadName | ArgStrs ] = tuple_to_list(RawTuple),
+	HeadStr = io_lib:format("'~s'", [HeadName]),
+	JoinedAll = lists:join(", ", [HeadStr | ArgStrs]),
+	io_lib:format("{ ~s }", [JoinedAll]);
+extract_match({match_list, []}) ->
+	"[]";
+extract_match({match_list, List}) ->
+	Strs = lists:map(fun extract_match/1, List),
+	Joined = lists:join(", ", Strs),
+	[$[, Joined, $]];
+extract_match({match_list_head, HeadList, Tail}) ->
+	Strs = lists:map(fun extract_match/1, HeadList),
+	TailStr = extract_match(Tail),
+	JoinedHead = lists:join(", ", Strs),
+	[$[, JoinedHead, " | ", TailStr, $]];
+extract_match({literal_integer, N}) ->
+	io_lib:format(" ~p ", [N]);
+extract_match({literal_string, S}) ->
+	io_lib:format(" <<\"~s\">> ", [S]);
+extract_match({literal_float, F}) ->
+	io_lib:format(" ~p ", [F]);
+
 extract_match(Node) ->
 	extract_match(milang_ast:data(Node)).
 
@@ -239,6 +448,40 @@ mutilate_name(Binary, BadBoyFinder, {match, [{Start, ByteLen} | _]}) ->
 	Mutilation = unicode:characters_to_binary([Before, MutilatedList, Rest]),
 	NewMatch = re:run(Mutilation, BadBoyFinder, [{offest, Start}]),
 	mutilate_name(Mutilation, BadBoyFinder, NewMatch).
+
+add_symbols_from_match({identifier_bound, L}, Scope) ->
+	case milang_scope:insert(L, match, Scope) of
+		{error, {shadowing, _, match}} ->
+			{ok, Scope};
+		{error, {shadowing, _, NotMatch}} ->
+			?LOG_ERROR("Somehow identifier ~p got pegged as both a match and a ~p", [L, NotMatch]),
+			{ok, Scope};
+		Ok ->
+			Ok
+	end;
+add_symbols_from_match({identifier_ignored, _}, Scope) ->
+	{ok, Scope};
+add_symbols_from_match({literal_integer, _}, Scope) ->
+	{ok, Scope};
+add_symbols_from_match({literal_string, _}, Scope) ->
+	{ok, Scope};
+add_symbols_from_match({literal_float, _}, Scope) ->
+	{ok, Scope};
+add_symbols_from_match({match_type, _ConstrutorName, Matches}, Scope) ->
+	lists:foldl(fun(Match, {ok, ScopeAcc}) ->
+		add_symbols_from_match(Match, ScopeAcc)
+	end, {ok, Scope}, Matches);
+add_symbols_from_match({match_list_head, HeadList, Tail}, Scope) ->
+	{ok, HeadScope} = lists:foldl(fun(Match, {ok, ScopeAcc}) ->
+		add_symbols_from_match(Match, ScopeAcc)
+	end, {ok, Scope}, HeadList),
+	add_symbols_from_match(Tail, HeadScope);
+add_symbols_from_match({match_list, List}, Scope) ->
+	lists:foldl(fun(Match, {ok, ScopeAcc}) ->
+		add_symbols_from_match(Match, ScopeAcc)
+	end, {ok, Scope}, List);
+add_symbols_from_match(Node, Scope) ->
+	add_symbols_from_match(milang_ast:data(Node), Scope).
 
 %% @doc Given a term, become eager. If the term is a 0 arity function, it is call
 %% and we loop through. Note that yes, this could indeed be an infinite loop.

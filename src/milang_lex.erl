@@ -1563,10 +1563,7 @@ match_head({part, Finish}, ProtoNode, Tokens, Options) ->
 		[{identifier_type, L, _Name} | _Tail] ->
 			MatchTypeProtoNode = milang_ast:ast_node(Comments, L),
 			case match_type(MatchTypeProtoNode, TokensSansSpace, Options) of
-				{ok, NewData, NewTokens} ->
-					Node = milang_ast:transform_data(fun(_) ->
-						NewData
-					end, ProtoNode),
+				{ok, Node, NewTokens} ->
 					match_head(Finish, Node, NewTokens, Options);
 				Error ->
 					Error

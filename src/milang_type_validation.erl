@@ -161,7 +161,7 @@ validate_node(Node, Table) ->
 	validate_node(Type, Node, Table).
 
 validate_node(module, _Node, Table) ->
-	?LOG_INFO("Easy validating a module declaration.", []),
+	?LOG_DEBUG("Easy validating a module declaration.", []),
 	{ok, Table};
 validate_node(import, _Node, Table) ->
 	% TODO currenly import does not even allow alias of the module, nor quick
@@ -226,9 +226,9 @@ validate_node(type, Node, Table) ->
 	end,
 	?LOG_DEBUG("So the constructors I got: ~p", [Constructors]),
 	Out = 'Result':foldl(ConstructorFoldFun, MidTable, Constructors),
-	?LOG_INFO("validated a declaration_type: ~p~n"
+	?LOG_DEBUG("validated a declaration_type: ~p~n"
 		"    Out: ~p"
-		, [Node, Out]),
+		, [Node, case Out of {ok, _} -> ok; _ -> Out end]),
 	Out;
 
 %validate_node(#milang_ast{ data = #declaration_function{} } = Node, Table) ->
@@ -343,7 +343,7 @@ validate_binding({class_taught, _StudentName, _ClassName, _Binding} = Id, {ok, I
 		{ok, NewTable} ->
 			add_entry(Id, Spec, NewTable);
 		Error ->
-			?LOG_DEBUG("class_taught binding ~p failed to register due to ~p", [Id, Error]),
+			?LOG_ERROR("class_taught binding ~p failed to register due to ~p", [Id, Error]),
 			Error
 	end;
 validate_binding(Match, {ok, Type}, _NoMatter, _Table) ->
@@ -363,9 +363,9 @@ validate_spec(Data, Table) ->
 		add_entry(identifier(Name), Type, Table)
 	end, ResultSpecType),
 	Out = ResultAddEntry,
-	?LOG_INFO("validating a declaration spec: ~p~n"
+	?LOG_DEBUG("validating a declaration spec: ~p~n"
 		"    Output: ~p"
-		, [ Data, Out]),
+		, [ Data, case Out of {ok, _} -> ok; _ -> Out end]),
 	Out.
 
 validate_teach(Data, Table) ->
@@ -411,7 +411,7 @@ validate_teach(Data, Table) ->
 				NewTable = set_entry(StudentName, NewStudent, Table),
 				{ok, NewTable};
 			false ->
-				?LOG_DEBUG("~p has not learned enough to learn ~p. It has learned ~p", [StudentName, ClassName, Learned]),
+				?LOG_ERROR("~p has not learned enough to learn ~p. It has learned ~p", [StudentName, ClassName, Learned]),
 				{error, {missing_prereqs, ordsets:subtract(Prereqs, Learned)}}
 		end
 	end),
@@ -455,7 +455,7 @@ validate_teach(Data, Table) ->
 						?LOG_DEBUG("Using the default in class: ~p", [HasDefaultRes]),
 						HasDefaultRes;
 					_ ->
-						?LOG_DEBUG("Likely our table or other lookups are screwed.~n"
+						?LOG_ERROR("Likely our table or other lookups are screwed.~n"
 							"    Defaults: ~p~n"
 							"    BindingsAsMap: ~p~n"
 							"    TableWithLearnedStudent: ~p"
@@ -472,7 +472,7 @@ validate_teach(Data, Table) ->
 				end)
 			end, {ok, TableWithLearnedStudent}, SpecList)
 		end),
-	?LOG_DEBUG("Final teach result: ~p", [FinalRes]),
+	?LOG_DEBUG("Final teach result: ~p", [case FinalRes of {ok, _} -> ok; _ -> FinalRes end]),
 	FinalRes.
 
 validate_class(Data, Table) ->
@@ -587,6 +587,10 @@ check_type_match_(any, _Inferred, Table) ->
 check_type_match_(#tv_function{} = A, #tv_concrete{} = B, Table) ->
 	KnownArgs = A#tv_function.args,
 	InferredArgs = B#tv_concrete.args,
+	check_type_list_match(KnownArgs, InferredArgs, Table);
+check_type_match_(#tv_concrete{} = A, #tv_function{} = B, Table) ->
+	KnownArgs = A#tv_concrete.args,
+	InferredArgs = B#tv_function.args,
 	check_type_list_match(KnownArgs, InferredArgs, Table);
 check_type_match_(#tv_function{} = A, #tv_function{} = B, Table) ->
 	% This is for when the type specifier is inferred, as opposed to the actual
@@ -865,7 +869,7 @@ type_of_node(call, Node, Table) ->
 		KnownArgs = Known#tv_function.args,
 		if
 			length(InferredArgs) > length(KnownArgs) ->
-				?LOG_DEBUG("Inferred args ended up longer than the known args somehow.~n"
+				?LOG_ERROR("Inferred args ended up longer than the known args somehow.~n"
 					"    TypeCheck: ~p~n"
 					"    Known: ~p~n"
 					"    Inferred: ~p"
