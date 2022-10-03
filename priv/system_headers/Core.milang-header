@@ -36,6 +36,9 @@ class Core.Equality a =
 		Core.not (== a b)..
 	.
 
+spec Core.== when [ , a Core.Equality ] = a -> a -> Core.Boolean.
+spec Core.<> when [ , a Core.Equality ] = a -> a -> Core.Boolean.
+
 teach Core.Integer class Core.Equality ->
 	let == = Core.integer-==.
 	.
@@ -64,6 +67,14 @@ type Core.Order = [
 	, Core.EqualTo
 	].
 
+teach Core.Order class Core.Equality ->
+	let == = function a b ->
+		match a with
+			b -> Core.True.
+			_ -> Core.False.
+		.
+	...
+
 class Core.Sortable a when [
 	, a Core.Equality
 	] =
@@ -73,38 +84,30 @@ class Core.Sortable a when [
 	spec < = a -> a -> Core.Boolean.
 	spec <= = a -> a -> Core.Boolean.
 	let > = function a b ->
-		match (compare a b) with
-			Core.GreaterThan ->
-				Core.True.
-			_ ->
-				Core.False.
-		...
+		compare a b '== Core.GreaterThan
+	..
 	let >= = function a b ->
-		match compare a b with
-			Core.GreaterThan ->
-				Core.True.
-			Core.EqualTo ->
-				Core.True.
-			Core.LessThan ->
-				Core.False.
-		...
+		let compareVal = compare a b.
+		let isGreater = compareVal '== Core.GreaterThan.
+		let equalTo = compareVal '== Core.EqualTo.
+		isGreater 'Core.or equalTo
+	..
 	let < = function a b ->
-		match compare a b with
-			Core.LessThan ->
-				Core.True.
-			_ ->
-				Core.False.
-		...
+		compare a b '== Core.LessThan
+	..
 	let <= = function a b ->
-		match compare a b with
-			Core.LessThan ->
-				Core.True.
-			Core.EqualTo ->
-				Core.True.
-			Core.GreaterThan ->
-				Core.True.
-		...
+		let compareVal = compare a b.
+		let isLess = compareVal '== Core.LessThan.
+		let equalTo = compareVal '== Core.EqualTo.
+		isLess 'Core.or equalTo
+	..
 	.
+
+spec Core.compare when [, a Core.Sortable ] = a -> a -> Core.Order.
+spec Core.> when [ , a Core.Sortable ] = a -> a -> Core.Boolean.
+spec Core.>= when [ , a Core.Sortable ] = a -> a -> Core.Boolean.
+spec Core.< when [ , a Core.Sortable ] = a -> a -> Core.Boolean.
+spec Core.<= when [ , a Core.Sortable ] = a -> a -> Core.Boolean.
 
 spec Core.integer-compare = Core.Integer -> Core.Integer -> Core.Order.
 
@@ -210,3 +213,16 @@ teach Core.Float class Core.Number ->
 	let from_integer = Core.float-from_integer.
 	let additive_inverse = Core.float-additive_inverse.
 	.
+
+
+spec Core.+ when [ , a Number ] = a -> a -> a.
+spec Core.* when [ , a Number ] = a -> a -> a.
+spec Core./ when [ , a Number ] = a -> a -> Maybe a.
+spec Core.// when [ , a Number ] = a -> a -> a -> a.
+spec Core.- when [ , a Number ] = a -> a -> a.
+spec Core.^ when [ , a Number ] = a -> a -> Maybe a.
+spec Core.^^ when [ , a Number ] = a -> a -> a -> a.
+spec Core.abs when [ , a Number ] = a -> a.
+spec Core.sign_of when [ , a Number ] = a -> a.
+spec Core.from_integer when [ , a Number ] = Core.Integer -> a.
+spec Core.additive_inverse when [ , a Number ] = a -> a.

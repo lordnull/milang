@@ -21,13 +21,17 @@ string(type, Node, Depth) ->
 	Constructors = list(milang_ast_type:constructors(Data), Depth + 1),
 	["type ", Name, Args, Constraints, " = ", Constructors, ".\n"];
 
-string(identifier_type, Node, Depth) ->
+string(identifier_type, Node, _Depth) ->
 	{identifier_type, Data} = milang_ast:data(Node),
-	string(undefined, Data, Depth);
+	identifier_string(Data);
 
-string(identifier_bound, Node, Depth) ->
+string(identifier_bound, Node, _Depth) ->
 	{identifier_bound, Data} = milang_ast:data(Node),
-	string(undefined, Data, Depth);
+	identifier_string(Data);
+
+string(identifier_ignored, Node, _Depth) ->
+	{identifier_ignored, Data} = milang_ast:data(Node),
+	identifier_string(Data);
 
 string(constructor, Node, Depth) ->
 	Data = milang_ast:data(Node),
@@ -97,18 +101,12 @@ string(spec, Node, Depth) ->
 
 	["spec ", NameStr , ConstraintsString, " = ", TypeString, ".\n"];
 
-string(undefined, #{ module := Module, local := Local }, _Depth) ->
-	[Module, ".", Local];
-
-string(undefined, Name, _Depth) when is_binary(Name) ->
-	Name;
-
 string(undefined, Node, Depth) ->
 	try milang_ast:data(Node) of
 		D ->
 			string(undefined, D, Depth)
 	catch
-		error:badarg ->
+		error:{badrecord, _} ->
 			?LOG_ERROR("not yet implmented for delexing: ~p", [Node]),
 			""
 	end;
@@ -117,12 +115,17 @@ string(_, Node, _Depth) ->
 	?LOG_ERROR("not yet implmented for delexing: ~p", [Node]),
 	"".
 
+identifier_string(#{ module := Module, local := Local}) ->
+	[Module, $., Local];
+identifier_string(String) when is_binary(String) ->
+	String.
+
 list(Nodes, Depth) ->
 	Tabs = tabs(Depth),
 	Entries = lists:map(fun(Node) ->
 		["\n", Tabs, ", ", string(Node, Depth)]
 	end, Nodes),
-	["[\n", Entries, "\n", Tabs, "]"].
+	["[", Entries, "\n", Tabs, "]"].
 
 maybe_parens(String, Node) ->
 	case should_parens(milang_ast:type_simply(Node), milang_ast:data(Node)) of
@@ -132,7 +135,7 @@ maybe_parens(String, Node) ->
 			String
 	end.
 
-should_parens(type_concrete, _) ->
+should_parens(concrete, _) ->
 	true;
 should_parens(signature, _) ->
 	true;

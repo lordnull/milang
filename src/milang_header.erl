@@ -75,13 +75,16 @@ add_alias_translation(Node, Translations) ->
 		{_, Name} ->
 			OriginalNode = milang_ast_alias:original(Data),
 			Original = milang_ast:data(OriginalNode),
-			OriginalName = milang_ast_concrete:name(Original),
+			OriginalNameNode = milang_ast_concrete:name(Original),
+			{_, OriginalName} = milang_ast:data(OriginalNameNode),
+			?LOG_DEBUG("Adding translation of alias ~p to ~p", [Name, OriginalName]),
 			Translations#{ Name => OriginalName}
 	end.
 
 maybe_add_translation(Name, _Module, Translations) when is_map(Name) ->
 	Translations;
 maybe_add_translation(Name, Module, Translations) when is_binary(Name) ->
+	?LOG_DEBUG("Making ~p an remote for module ~p", [Name, Module]),
 	Translations#{ Name => #{ local => Name, module => Module }};
 maybe_add_translation({_, Name}, Module, Translations) ->
 	maybe_add_translation(Name, Module, Translations);
@@ -174,14 +177,15 @@ convert_node(alias, Node, Module, Translations) ->
 convert_node(concrete, Node, Module, Translations) ->
 	Concrete = milang_ast:data(Node),
 
-	Name = milang_ast_concrete:name(Concrete),
-	NewName = lookup_translation(Name, Translations),
+	NameNode = milang_ast_concrete:name(Concrete),
+	%NewName = lookup_translation(Name, Translations),
+	{NewName, TransaltionsWithConcrete} = convert_node(milang_ast:type_simply(NameNode), NameNode, Module, Translations),
 
 	ArgNodes = milang_ast_concrete:args(Concrete),
 	{NewArgs, NewTranslations} = lists:mapfoldl(fun(ArgNode, TAcc) ->
 		T = milang_ast:type_simply(ArgNode),
 		convert_node(T, ArgNode, Module, TAcc)
-	end, Translations, ArgNodes),
+	end, TransaltionsWithConcrete, ArgNodes),
 
 	NewNode = milang_ast:transform_data(fun(_) ->
 		milang_ast_concrete:name(NewName, milang_ast_concrete:args(NewArgs, Concrete))

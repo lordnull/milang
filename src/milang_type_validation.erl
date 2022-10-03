@@ -89,11 +89,6 @@
 	}).
 -type class() :: #tv_class{}.
 
--record(tv_class_function,
-	{ of_class
-	}).
--type class_function() :: #tv_class_function{}.
-
 % the individual constructors for a top type. Generally used in type
 % declarataions, or to find the type of an expression.
 % -type Maybe a | Just a | Nothing. :: #{
@@ -139,7 +134,6 @@
 	, constructor/0
 	, alias/0
 	, class/0
-	, class_function/0
 	, entry/0
 	, lookup_table/0
 	, mi_identifier/0
@@ -520,8 +514,8 @@ validate_class(Data, Table) ->
 	},
 	case add_entry(Name, TvClass, Table) of
 		{ok, TableWithClass} ->
-			'Result':foldl(fun({SpecName, _}, SpecTable) ->
-				add_entry(SpecName, #tv_class_function{ of_class = Name }, SpecTable)
+			'Result':foldl(fun({SpecName, Spec}, SpecTable) ->
+				add_entry(SpecName, Spec#tv_function{ constraints = #{ TypeVariable => Name} }, SpecTable)
 			end, TableWithClass, SpecsAsList);
 		Error ->
 			Error
@@ -786,7 +780,8 @@ type_of_node(call, Node, Table) ->
 	Args = milang_ast_call:args(Data),
 	% TODO not all function names follow the pattern of {name_type(), mi_identifier()}.
 	% hopefully this will get fixed.
-	Name = case milang_ast_call:function(Data) of
+	NameNode = milang_ast_call:function(Data),
+	Name = case milang_ast:data(NameNode) of
 		{_NameType, CallName} ->
 			CallName;
 		JustCallName ->
@@ -810,26 +805,6 @@ type_of_node(call, Node, Table) ->
 			% no args but returns a literal value is: nothing. There is no
 			% difference.
 			{ok, #tv_function{}};
-		(#tv_class_function{of_class = ClassName}) ->
-			ClassResult = lookup(ClassName, Table),
-			ClassSpecsResult = 'Result':and_then(fun(MaybeTvClass) ->
-				case MaybeTvClass of
-					#tv_class{ member_specs = ClassSpecs } ->
-						{ok, ClassSpecs};
-					_NotAClass ->
-						{error, {not_a_class, ClassName, MaybeTvClass}}
-				end
-			end, ClassResult),
-			'Result':and_then(fun(Specs) ->
-				case maps:find(Name, Specs) of
-					error ->
-						{error, {not_a_member_of_class, ClassName, Name}};
-					{ok, #tv_function{}} = Ok ->
-						Ok;
-					{ok, NotFunction} ->
-						{error, {not_a_function, Name, ClassName, NotFunction}}
-				end
-			end, ClassSpecsResult);
 		(#tv_constructor{ } = Constructor) ->
 			DataName = Constructor#tv_constructor.constructor_of,
 			ConstructorArgs = Constructor#tv_constructor.args,
@@ -841,6 +816,21 @@ type_of_node(call, Node, Table) ->
 			Concrete = #tv_concrete{ concrete_of = Name , args = TvData#tv_data.arg_names },
 			Function = #tv_function{ args = TvData#tv_data.arg_names ++ [ Concrete]},
 			{ok, Function};
+		(#tv_concrete{} = Concrete) when Args =:= [] ->
+			% this is likely the result of a let binding resolving to a fully
+			% called function. eg:
+			%     let add = function a b -> a '+ b..
+			%     let sum = add 5 3.
+			% the type of 'sum' will be Integer. However, if we then use it
+			% as follows:
+			%     let f = function a b ->
+			%         let sum = add 5 3.
+			%         sum '+ 7..
+			% The lexxer says "oh, sum must be a call". Well, it's not
+			% technically wrong. However, the difference between a function with
+			% no args and the value it generates is _none_, therefore, our type
+			% validation should assumed the same.
+			{ok, #tv_function{ args = [Concrete]}};
 		(#tv_concrete{} = Concrete) ->
 			% there are some valid lexical structures that will appears as
 			% concretes to the lexer, but are also valid constructors. An Exmaple
@@ -1004,7 +994,7 @@ type_of_node(infix_tree, Node, Table) ->
 	Function = milang_ast_infix_notation:function(Notation),
 	Args = [LeftNode, RightNode],
 	CallNode = milang_ast:transform_data(fun(_) ->
-		milang_ast_call:new({identifier_bound, Function}, Args)
+		milang_ast_call:new(Function, Args)
 	end, Node),
 	type_of_node(call, CallNode, Table);
 
@@ -1087,7 +1077,8 @@ type_of_node(match_clause, Node, Table) ->
 	end, WithBindsTableRes);
 
 type_of_node(match_type, Node, Table) ->
-	{match_type, Name, Args} = milang_ast:data(Node),
+	{match_type, NameNode, Args} = milang_ast:data(Node),
+	{_, Name} = milang_ast:data(NameNode),
 	ArgTypesRes = lists:foldl(fun
 		(_ArgNode, {error, _} = Acc) ->
 			Acc;

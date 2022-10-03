@@ -2,7 +2,7 @@
 %%% lookup up a key and going into higher level scopes.
 -module(milang_scope).
 
--export([new/0, lookup/2, add_scope/1, pop_scope/1, insert/3, update/3]).
+-export([new/0, lookup/2, add_scope/1, pop_scope/1, insert/3, update/3, foldl/3]).
 
 -type scope(Key, Value) :: [ #{ Key => Value } ].
 
@@ -54,3 +54,7 @@ update(Key, Value, [Scope | Tail], NotFoundIn) ->
 			{ok, lists:concat(NewHead, NewTail)}
 	end.
 
+foldl(Folder, Init, Scope) ->
+	lists:foldl(fun(AScope, Acc) ->
+		maps:fold(Folder, Acc, AScope)
+	end, Init, Scope).

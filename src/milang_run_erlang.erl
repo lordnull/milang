@@ -24,7 +24,6 @@ create_module(AST, WriteFun) ->
 module_declaration(AST) ->
 	Filter = fun(Node) ->
 		Type = milang_ast:type(Node),
-		?LOG_DEBUG("De node: ~p is de type ~p", [Node, Type]),
 		Type =:= {ok, module}
 	end,
 	[ ModuleNode | _] = lists:filter(Filter, AST),
@@ -68,6 +67,8 @@ as_export_entry(Node) ->
 	case DahFunc of
 		{ok, N} ->
 			{true, [N, "/0"]};
+		{error, only_expose} ->
+			false;
 		_ ->
 			?LOG_DEBUG("Not exportable reason ~p of node ~p", [DahFunc, Node]),
 			false
@@ -80,6 +81,7 @@ write_functions([ AST | Tail], Symbols, WriteFun) ->
 	write_functions(Tail, NewSymbols, WriteFun).
 
 write_function(AST, Symbols, WriteFun) ->
+	?LOG_DEBUG("Starting write of node ~p", [AST]),
 	Type = milang_ast:type(AST),
 	write_function(Type, AST, Symbols, WriteFun).
 
@@ -87,8 +89,12 @@ write_function({ok, import}, _AST, Symbols, _WriteFun) ->
 	Symbols;
 write_function({ok, module}, _AST, Symbols, _WriteFun) ->
 	Symbols;
-write_function({ok, spec}, _AST, Symbols, _WriteFun) ->
-	Symbols;
+write_function({ok, spec}, AST, Symbols, _WriteFun) ->
+	Data = milang_ast:data(AST),
+	Name = milang_ast_spec:name(Data),
+	{ok, NewSymbols} = milang_scope:insert(Name, function, Symbols),
+	NewSymbols;
+
 write_function({ok, binding}, AST, Symbols, WriteFun) ->
 	Data = milang_ast:data(AST),
 	MatchNode = milang_ast_binding:match(Data),
@@ -100,16 +106,36 @@ write_function({ok, binding}, AST, Symbols, WriteFun) ->
 			Expression = milang_ast_binding:expression(Data),
 			ok = write_function_body(Expression, milang_scope:add_scope(NewSymbols), WriteFun),
 			NewSymbols;
-		_ ->
-			Symbols
+		{_, Name} ->
+			case milang_scope:insert(Name, function, Symbols) of
+				{ok, NewSymbols} ->
+					NewSymbols;
+				{error, Err} ->
+					?LOG_ERROR("Could not add ~p to symbols table due to ~p", [MatchData, Err]),
+					Symbols
+			end
 	end;
 write_function({ok, type}, AST, Symbols, WriteFun) ->
 	Data = milang_ast:data(AST),
-	case milang_ast_type:constructors(Data) of
-		[] ->
+	{_, Name} = NameData = milang_ast:data(milang_ast_type:name(Data)),
+	case {is_map(Name), milang_ast_type:constructors(Data)} of
+		{true, []} ->
+			{ok, NewSymbols} = milang_scope:insert(Name, {type, false}, Symbols),
+			NewSymbols;
+		{true, ConstructorNodes} ->
+			{ok, WithType} = milang_scope:insert(Name, {type, true}, Symbols),
+			WithConstructors = lists:foldl(fun(ConstructorNode, Acc) ->
+				Constructor = milang_ast:data(ConstructorNode),
+				ConstructorNameNode = milang_ast_constructor:name(Constructor),
+				{_, ConstructorName} = milang_ast:data(ConstructorNameNode),
+				{ok, NewAcc} = milang_scope:insert(ConstructorName, {constructor, Name}, Acc),
+				NewAcc
+			end, WithType, ConstructorNodes),
+			WithConstructors;
+		{_, []} ->
 			{_, Name} = NameData = milang_ast:data(milang_ast_type:name(Data)),
 			TypeName = as_function_name(NameData),
-			{ok, NewSymbols} = milang_scope:insert(Name, type, Symbols),
+			{ok, NewSymbols} = milang_scope:insert(Name, {type, false}, Symbols),
 			ArgNodes = milang_ast_type:args(Data),
 			ArgNames = lists:map(fun(ArgNode) ->
 				extract_match(milang_ast:data(ArgNode))
@@ -121,13 +147,132 @@ write_function({ok, type}, AST, Symbols, WriteFun) ->
 			Function = io_lib:format("~s() -> ~s", [TypeName, FunctionBody]),
 			WriteFun(Function),
 			NewSymbols;
-		Constructors ->
-			write_constructors(Constructors, Symbols, WriteFun)
+		{_, Constructors} ->
+			WithConstructors = write_constructors(Constructors, Name, Symbols, WriteFun),
+			{ok, NewSymbols} = milang_scope:insert(Name, {type, true}, WithConstructors),
+			NewSymbols
+	end;
+
+write_function({ok, alias}, AST, Symbols, WriteFun) ->
+	Data = milang_ast:data(AST),
+	% TODO handle the multiple whys an alias can manifest.
+	?LOG_ERROR("write and alias, god! ~p", [Data]),
+	NameNode = milang_ast_alias:name(Data),
+	LocalNameRaw = milang_ast:data(NameNode),
+	LocalNameRes = (fun
+		({identifier_type, L}) when is_map(L) ->
+			'Result':'Err'(cannot_alias_to_remote_name);
+		({identifier_type, L}) when is_binary(L) ->
+			'Result':'Ok'(L);
+		(Wut) ->
+			?LOG_ERROR("Cannot alias to given name ~p", [Wut]),
+			'Result':'Err'({cannot_alias_with_name, Wut})
+	end)(LocalNameRaw),
+	?LOG_DEBUG("LocalNameRes: ~p", [LocalNameRes]),
+	OriginalNode = milang_ast_alias:original(Data),
+	OriginalFoundRes = lookup_for_alias(OriginalNode, Symbols),
+	?LOG_DEBUG("OriginalFoundRes: ~p", [OriginalFoundRes]),
+	OriginalRes = 'Result':map(fun(SymbolType) ->
+		{milang_ast:data(OriginalNode), SymbolType}
+	end, OriginalFoundRes),
+	?LOG_DEBUG("OriginalRes: ~p", [OriginalRes]),
+	ResultConstructors = 'Result':and_then(fun(OriginalFound) ->
+		{OriginalData, OriginalSymbol} = OriginalFound,
+		OriginalNodeType = milang_ast:type_simply(OriginalNode),
+		case {OriginalNodeType, OriginalSymbol} of
+			{concrete, {type, false}} ->
+				'Result':'Ok'([milang_ast_concrete:name(OriginalData)]);
+			{concrete, {type, true}} ->
+				OriginalNameNode = milang_ast_concrete:name(OriginalData),
+				{_, OriginalName} = milang_ast:data(OriginalNameNode),
+				Constructors = milang_scope:foldl(fun(K, Value, Acc) ->
+					case Value of
+						{constructor, OriginalName} ->
+							[K | Acc];
+						_ ->
+							Acc
+					end
+				end, [], Symbols),
+				'Result':'Ok'(Constructors);
+			Wut ->
+				?LOG_ERROR("Cannot import consructors since I don't know the type: ~p~n"
+					"OriginalData: ~p~n"
+					"OriginalSymbol: ~p"
+					, [Wut, OriginalData, OriginalSymbol]),
+				'Result':'Err'(unsupported_constructor_aliased)
+		end
+	end, OriginalRes),
+	?LOG_DEBUG("ResultConstructors: ~p", [ResultConstructors]),
+	_ = 'Result':map(fun(Constructors) ->
+		lists:foreach(fun(Constructor) ->
+			case Constructor of
+				#{ module := M, local := Local } ->
+					Text = io_lib:format("'~s'() -> '~s':'~s'().~n~n", [Local, M, Local]),
+					WriteFun(Text);
+				_ ->
+					?LOG_ERROR("Not writing the constructor ~p", [Constructor]),
+					ok
+			end
+		end, Constructors)
+	end, ResultConstructors),
+	SymbolsTableWithOriginal = 'Result':and_then_n([LocalNameRes, OriginalRes], fun(LocalName, Original) ->
+		{OriginalData, _} = Original,
+		OriginalName = milang_ast_concrete:name(OriginalData),
+		milang_scope:insert(LocalName, {alias, OriginalName}, Symbols)
+	end),
+	SymbolsWithAllRes = 'Result':and_then_n([ResultConstructors, SymbolsTableWithOriginal], fun(Constructors, InSymbols) ->
+		'Result':foldl(fun(Constructor, TableAcc) ->
+			case Constructor of
+				#{ local := L } ->
+					milang_scope:insert(L, Constructor, TableAcc);
+				_ ->
+					'Result':'Ok'(TableAcc)
+			end
+		end, InSymbols, Constructors)
+	end),
+	case SymbolsWithAllRes of
+		{error, Err} ->
+			?LOG_ERROR("Writing alias failed due to ~p.~n"
+				"    AST: ~p~n"
+				"    Symbols: ~p"
+				, [Err, AST, Symbols]),
+			Symbols;
+		{ok, NewSymbols} ->
+			NewSymbols
 	end;
 
 write_function(_Type, AST, Symbols, _WriteFun) ->
 	?LOG_ERROR("nyi writing the ast as function: ~p", [AST]),
 	Symbols.
+
+lookup_for_alias(OriginalNode, Symbols) ->
+	OriginalNodeType = milang_ast:type_simply(OriginalNode),
+	case OriginalNodeType of
+		concrete ->
+			OriginalData = milang_ast:data(OriginalNode),
+			OriginalNameNode = milang_ast_concrete:name(OriginalData),
+			{_, OriginalName} = milang_ast:data(OriginalNameNode),
+			milang_scope:lookup(OriginalName, Symbols);
+		_ ->
+			{error, unsupported_node_type}
+	end.
+
+%import_module([ Node | Tail], Symbols) ->
+%	Type = milang_ast:type_simply(Node),
+%	NewSymbols = import_module(Type, milang_ast:data(Node), Symbols),
+%	import_module(Tail, NewSymbols);
+%
+%import_module(undefined, Symbols) ->
+%	?LOG_ERROR("wut? no import ast!"),
+%	Symbols;
+%
+%import_module(ImportData, Symbols) ->
+%	ImportAST = milang_ast_import:imported_ast(ImportData),
+%	import_module(ImportAST, Symbols).
+%
+%import_module(Type, _Data, Symbols) ->
+%	?LOG_ERROR("unknonw type ~p for import", [Type]),
+%	Symbols.
 
 write_function_body(Node, Symbols, WriteFun) ->
 	Type = milang_ast:type(Node),
@@ -138,7 +283,8 @@ write_function_body({ok, call}, Call, Symbols, WriteFun) ->
 	Args = lists:map(fun(E) ->
 		write_expression(E, Symbols)
 	end, milang_ast_call:args(Call)),
-	StackBuilder = case milang_ast_call:function(Call) of
+	FunctionNameNode = milang_ast_call:function(Call),
+	StackBuilder = case milang_ast:data(FunctionNameNode) of
 		{identifier_bound, #{ local := L, module := M}} ->
 			io_lib:format("'~s':'~s'()", [M, L]);
 		{identifier_bound, L} ->
@@ -237,19 +383,19 @@ write_expression({ok, infix_tree}, Tree, Symbols) ->
 	curry_call(StackBuilder, [LeftChars, RightChars]);
 
 write_expression({ok, call}, Call, Symbols) ->
-	Function = milang_ast_call:function(Call),
-	TrueFunctionName = case Function of
+	FunctionNode = milang_ast_call:function(Call),
+	TrueFunctionName = case milang_ast:data(FunctionNode) of
 		{identifier_bound, N} -> N;
 		{identifier_type, N} -> N;
-		_ when is_binary(Function) -> Function
+		N when is_binary(N) -> N
 	end,
 	Args = milang_ast_call:args(Call),
 	Symbol = milang_scope:lookup(TrueFunctionName, Symbols),
 	case {Symbol, Args} of
 		{{ok, match}, []} ->
-			extract_match(Function);
+			extract_match(FunctionNode);
 		_ ->
-			StackBuilder = [as_function_name(Function), "()"],
+			StackBuilder = [as_function_name(milang_ast:data(FunctionNode)), "()"],
 			ArgsChars = lists:map(fun(ArgNode) ->
 				write_expression(ArgNode, Symbols)
 			end, Args),
@@ -309,18 +455,18 @@ write_expression(_, Data, _Symbols) ->
 	?LOG_ERROR("not yet implemented as pure expression: ~p", [Data]),
 	"".
 
-write_constructors(Constructors, Symbols, WriteFun) ->
+write_constructors(Constructors, TypeName, Symbols, WriteFun) ->
 	lists:foldl(fun(C, SymbolAcc) ->
-		write_constructor(C, SymbolAcc, WriteFun)
+		write_constructor(C, TypeName, SymbolAcc, WriteFun)
 	end, Symbols, Constructors).
 
-write_constructor(ConstructorNode, Symbols, WriteFun) ->
+write_constructor(ConstructorNode, TypeName, Symbols, WriteFun) ->
 	Data = milang_ast:data(ConstructorNode),
 	NameNode = milang_ast_constructor:name(Data),
 	ArgNodes = milang_ast_constructor:args(Data),
 	Name = as_function_name(milang_ast:data(NameNode)),
 	{_, TrueName} = milang_ast:data(NameNode),
-	{ok, NewSymbols} = milang_scope:insert(TrueName, constructor, Symbols),
+	{ok, NewSymbols} = milang_scope:insert(TrueName, {constructor, TypeName}, Symbols),
 	Args = lists:map(fun(ArgNode) ->
 		case milang_ast:type_simply(ArgNode) of
 			identifier_bound ->
@@ -366,16 +512,15 @@ as_function_name({identifier_bound, #{ module := M, local := L}}) ->
 as_function_name({identifier_bound, L}) ->
 	["'", L, "'"];
 as_function_name({identifier_type, #{ module := M, local := L}}) ->
-	["'", M, "':'", "'", L, "'"];
+	["'", M, "':'", L, "'"];
 as_function_name({identifier_type, L}) ->
 	["'", L, "'"];
 as_function_name(#{ module := M, local := L}) ->
 	["'", M, "':'", L, "'"];
 as_function_name(L) when is_binary(L) ->
 	["'", L, "'"];
-as_function_name(Name) ->
-	?LOG_ERROR("Likely an invalid function name: ~p", [Name]),
-	"'Core':'never'".
+as_function_name(Node) ->
+	as_function_name(milang_ast:data(Node)).
 
 extract_match({identifier_bound, #{ module := M, local := L }}) ->
 	extract_match(unicode:characters_to_binary(["V_", M, $., L]));
@@ -395,29 +540,34 @@ extract_match(Binary) when is_binary(Binary) ->
 	{ok, BadBoyFinder} = re:compile("[^a-zA-Z0-9_]+", [unicode, ucp]),
 	FirstRun = re:run(Binary, BadBoyFinder, []),
 	mutilate_name(Binary, BadBoyFinder, FirstRun);
-extract_match({match_type, ConstructorName, ConstructorMatches}) when is_binary(ConstructorName) ->
-	% it's a local constructor, so we need to build the match manually.
-	NameMatch = extract_match({identifier_type, ConstructorName}),
-	case ConstructorMatches of
-		[] ->
-			NameMatch;
-		_ ->
+extract_match({match_type, ConstructorNameNode, ConstructorMatches}) ->
+	{_, ConstructorName} = milang_ast:data(ConstructorNameNode),
+	if
+		is_binary(ConstructorName) ->
+			% it's a local constructor, so we need to build the match manually.
+			NameMatch = extract_match(ConstructorNameNode),
+			case ConstructorMatches of
+				[] ->
+					NameMatch;
+				_ ->
+					Args = lists:map(fun extract_match/1, ConstructorMatches),
+					JoinedAll = lists:join(", ", [NameMatch | Args]),
+					io_lib:format("{ ~s }", [JoinedAll])
+			end;
+		is_map(ConstructorName) ->
+			% hopefully the compiler has built the beam we need to actually do the
+			% match constructor for us. I'm not worried about using up the atom space
+			% because this is not code meant to be on a long running server.
+			#{ local := LocalStr, module := ModuleStr } = ConstructorName,
+			Local = binary_to_atom(LocalStr, utf8),
+			Module = binary_to_atom(ModuleStr, utf8),
 			Args = lists:map(fun extract_match/1, ConstructorMatches),
-			JoinedAll = lists:join(", ", [NameMatch | Args]),
+			RawTuple = erlang:apply(Module, Local, Args),
+			[HeadName | ArgStrs ] = tuple_to_list(RawTuple),
+			HeadStr = io_lib:format("'~s'", [HeadName]),
+			JoinedAll = lists:join(", ", [HeadStr | ArgStrs]),
 			io_lib:format("{ ~s }", [JoinedAll])
 	end;
-extract_match({match_type, #{ local := LocalStr, module := ModuleStr }, ConstructorMatches}) ->
-	% hopefully the compiler has built the beam we need to actually do the
-	% match constructor for us. I'm not worried about using up the atom space
-	% because this is not code meant to be on a long running server.
-	Local = binary_to_atom(LocalStr, utf8),
-	Module = binary_to_atom(ModuleStr, utf8),
-	Args = lists:map(fun extract_match/1, ConstructorMatches),
-	RawTuple = erlang:apply(Module, Local, Args),
-	[HeadName | ArgStrs ] = tuple_to_list(RawTuple),
-	HeadStr = io_lib:format("'~s'", [HeadName]),
-	JoinedAll = lists:join(", ", [HeadStr | ArgStrs]),
-	io_lib:format("{ ~s }", [JoinedAll]);
 extract_match({match_list, []}) ->
 	"[]";
 extract_match({match_list, List}) ->
@@ -446,7 +596,7 @@ mutilate_name(Binary, BadBoyFinder, {match, [{Start, ByteLen} | _]}) ->
 	MutilateList = binary_to_list(Mutilatable),
 	MutilatedList = lists:map(fun integer_to_binary/1, MutilateList),
 	Mutilation = unicode:characters_to_binary([Before, MutilatedList, Rest]),
-	NewMatch = re:run(Mutilation, BadBoyFinder, [{offest, Start}]),
+	NewMatch = re:run(Mutilation, BadBoyFinder, [{offset, Start}]),
 	mutilate_name(Mutilation, BadBoyFinder, NewMatch).
 
 add_symbols_from_match({identifier_bound, L}, Scope) ->

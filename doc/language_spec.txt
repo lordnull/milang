@@ -585,6 +585,47 @@ teach Integer class Numerical ->
 	.
 ```
 
+That's all well and good, but now we need a way to reference and _use_ those.
+My first thought is introducing an "import class" style line, but that seems
+clunky. Using "let == = Core.==." could work, but there's no actualy "Core.=="
+that exists, and it just seems confusing when there's no actualy function.
+Having Classes be magically exported when importing a module when everything else
+needs to aliased or bound goes against the idea of be explicit. So, that leads me
+back to some syntax that explicitly says "use this class in this module as though
+it were local.", but also allowing for infix notation to use class definitions
+remotely.
+
+```milang-wip
+
+import Core.
+
+let add = function a b ->
+	{- I need some way to denote in headers that this is a class function without
+	needing to mutilate the class function names. -}
+	a 'Core.+ b..
+
+{- so introduce a new keyword? -}
+learn Core.Number.
+{- or maybe just re-use an old one? -}
+{- so far this is my front runner. With the ide being _right there_ (and even
+other ide's building symbol tables), finding out that "Core.Number" is a class
+and not a module is easy. Unless there is a module calls "Core.Number", in
+which case, this becomes ambiguous. -}
+import Core.Number.
+{- combine some? This is basically removing the ambiguity from the above, which
+I think makes it the _true_ front runner. -}
+import class Core.Number
+alias class Core.Number {- ugh, really don't like that one. -}
+
+    spec Core.== when [ , a Equality ] = a -> a -> Core.Boolean.
+
+We can then do our usual let to bind:
+
+    let == = Core.==.
+
+And boom. So, with a bit of compiler magic on the header, we don't need to
+introduce any new syntax or ambibuity.
+```
 
 
 

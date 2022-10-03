@@ -20,6 +20,25 @@
 	, 'xor'/0
 	, 'xor'/2
 
+	, 'LessThan'/0
+	, 'GreaterThan'/0
+	, 'EqualTo'/0
+
+	, 'compare'/2
+	, 'compare'/0
+	, '>'/2
+	, '>'/0
+	, '>='/2
+	, '>='/0
+	, '<'/2
+	, '<'/0
+	, '<='/2
+	, '<='/0
+	, '=='/2
+	, '=='/0
+	, '<>'/2
+	, '<>'/0
+
 	, 'integer-=='/0
 	, 'integer-=='/2
 	, 'integer-compare'/0
@@ -67,6 +86,9 @@
 	, 'float-additive_inverse'/0
 	, 'float-additive_inverse'/1
 	]).
+
+-define(curried(FunctionName, Arity), FunctionName() -> milang_curry:stack(fun FunctionName/Arity)).
+-define(curried(FunctionName), ?curry(FunctionName, 0)).
 
 identity(E) -> E.
 
@@ -164,6 +186,8 @@ compare(A, B) ->
 		A < B ->
 			'LessThan'()
 	end.
+
+?curried(compare, 2).
 
 'LessThan'() -> less_than.
 
@@ -284,3 +308,41 @@ compare(A, B) ->
 
 'float-additive_inverse'(A) ->
 	A * -1.0.
+
+'>'(A, B) ->
+	Compared = compare(A, B),
+	'GreaterThan' =:= Compared.
+
+?curried('>', 2).
+
+'>='(A, B) ->
+	Compared = compare(A, B),
+	'GreaterThan' =:= Compared
+		orelse 'EqualTo' =:= Compared.
+
+?curried('>=', 2).
+
+'<'(A, B) ->
+	Compared = compare(A, B),
+	'LessThan'() =:= Compared.
+
+?curried('<', 2).
+
+'<='(A, B) ->
+	Compared = compare(A, B),
+	'LessThan'() =:= Compared
+		orelse 'EqualTo'() =:= Compared.
+
+?curried('<=', 2).
+
+'=='(A, B) ->
+	Compared = compare(A, B),
+	'EqualTo'() =:= Compared.
+
+?curried('==', 2).
+
+'<>'(A, B) ->
+	Compared = compare(A, B),
+	'EqualTo'() =/= Compared.
+
+?curried('<>', 2).

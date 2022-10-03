@@ -5,7 +5,11 @@
 -export_type([result/2]).
 
 -export(
-	[ ok/1
+	[ 'Ok'/1
+	, 'Ok'/0
+	, 'Err'/1
+	, 'Err'/0
+	, ok/1
 	, err/1
 	, and_then/2
 	, recover/2
@@ -16,11 +20,25 @@
 	, map_list/2
 	, map_n/2
 	, and_then_n/2
+	, to_maybe/1
+	, from_maybe/2
 	]).
 
 -spec ok(Ok) -> result(none(), Ok).
 ok(Ok) ->
 	{ok, Ok}.
+
+'Ok'() ->
+	milang_curry:stack(fun 'Ok'/1).
+
+'Ok'(V) ->
+	ok(V).
+
+'Err'() ->
+	milang_curry:stack(fun 'Err'/1).
+
+'Err'(X) ->
+	err(X).
 
 -spec err(Err) -> result(Err, none()).
 err(Err) ->
@@ -55,6 +73,16 @@ with_default({error, _}, Default) ->
 	Default;
 with_default({ok, V}, _Default) ->
 	V.
+
+to_maybe({ok, V}) ->
+	'Maybe':'Some'(V);
+to_maybe(_) ->
+	'Maybe':'Nothing'().
+
+from_maybe(_ErrValue, {ok, _} = Ok) ->
+	Ok;
+from_maybe(ErrorValue, undefined) ->
+	{error, ErrorValue}.
 
 -spec foldl(fun((Input, Acc) -> result(Err, Acc)), Acc, [ Input ]) -> result(Err, Acc).
 foldl(FoldFun, Init, Inputs) ->

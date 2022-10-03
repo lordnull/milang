@@ -56,7 +56,8 @@ compile([], Options) when is_list(Options) ->
 	error(no_ast);
 
 compile(AST, Options) when is_list(Options) ->
-	_ = put(silence, proplists:get_value(silence, Options, false)),
+	DefaultLogLevel = proplists:get_value(default_log_level, Options, info),
+	_ = milang_log:set_log_level(DefaultLogLevel),
 	InputFile = proplists:get_value(input_file_name, Options),
 	ok = ?LOG_DEBUG("Inputfile: ~s", [InputFile]),
 	OutputFile = proplists:get_value(output_file_name, Options),
@@ -79,6 +80,8 @@ compile(AST, Options) when is_list(Options) ->
 	end,
 	ok = ?LOG_DEBUG("ScratchFileName: ~s", [ScratchFileName]),
 	Mode = proplists:get_value(compile_mode, Options, program),
+	LintLogLevel = proplists:get_value(lint_log_level, Options, DefaultLogLevel),
+	_ = milang_log:set_log_level(LintLogLevel),
 	LintErrors = milang_lint:it(AST, Mode),
 	CompileState = #compile_state{
 		input_file_name = InputFile,
@@ -88,15 +91,21 @@ compile(AST, Options) when is_list(Options) ->
 		errors = LintErrors,
 		compile_mode = Mode
 	},
+	CompileLogLevel = proplists:get_value(compile_log_level, Options, DefaultLogLevel),
+	_ = milang_log:set_log_level(CompileLogLevel),
 	WithAlwaysImports = always_import_ast() ++ AST,
 	FinalState = compile(WithAlwaysImports, [], CompileState),
-	ok = io:format("Final state: ~p~n", [FinalState]),
-	ok = write_module(WithAlwaysImports, FinalState),
+	ok = ?LOG_DEBUG("Final state: ~p~n", [FinalState]),
+	WriteModLogLevel = proplists:get_value(write_module_log_level, Options, DefaultLogLevel),
+	_ = milang_log:set_log_level(WriteModLogLevel),
+	ok = write_module(FinalState),
 	ArchiveOptions =
 		[{erl_src_dir, ErlDir}
 		,{beam_dir, filename:join([WorkDir, "ebin"])}
 		,{support_modules, [ FinalState#compile_state.module_name | FinalState#compile_state.support_modules]}
 		,{main_file, FinalState#compile_state.module_name}],
+	ArchiveLogLevel = proplists:get_value(archive_log_level, Options, DefaultLogLevel),
+	_ = milang_log:set_log_level(ArchiveLogLevel),
 	ok = milang_archive:build(OutputFile, ArchiveOptions).
 
 make_dir_or_die(Dir) ->
@@ -164,7 +173,9 @@ read_ctime_or_die(Filename) ->
 	end.
 
 compile([], [], #compile_state{ errors = []} = State) ->
-	State;
+	OldBuffer = State#compile_state.ast_output_buffer,
+	Buffer = lists:reverse(OldBuffer),
+	State#compile_state{ ast_output_buffer = Buffer };
 compile([], [], #compile_state{ errors = Errors}) ->
 	error(Errors);
 compile([], [AST | NewStack], State) ->
@@ -181,50 +192,67 @@ compile(ASTNode, Stack, CompileState) ->
 		undefined ->
 			error({unknown_ast, ASTNode});
 		{ok, import} ->
-			WithSupport = add_support_module(milang_ast:data(ASTNode), CompileState),
-			MaybeAST = import_module(ASTNode, WithSupport),
-			case MaybeAST of
-				{ok, ImportAST} ->
-					compile(ImportAST, Stack, WithSupport);
-				{error, Error} ->
-					?LOG_DEBUG("Unable to complete import.~n    Node: ~p~n    Error: ~p", [ASTNode, Error]),
-					ErrorState = add_error(milang_ast:location(ASTNode), Error, WithSupport),
-					compile([], Stack, ErrorState)
+			NodeData = milang_ast:data(ASTNode),
+			case milang_ast_import:imported_ast(NodeData) of
+				undefined ->
+					WithSupport = add_support_module(milang_ast:data(ASTNode), CompileState),
+					MaybeAST = import_module(ASTNode, WithSupport),
+					case MaybeAST of
+						{ok, undefined} ->
+							?LOG_ERROR("Unable to complete import of ~p due to no ast.", [milang_ast:data(ASTNode)]),
+							ErrorState = add_error(milang_ast:location(ASTNode), no_ast_from_imported_module, WithSupport),
+							compile([], Stack, ErrorState);
+						{ok, ImportAST} ->
+							NewNode = milang_ast:transform_data(fun(D) ->
+								milang_ast_import:imported_ast(ImportAST, D)
+							end, ASTNode),
+							compile(ImportAST, Stack, add_node(NewNode, WithSupport));
+						{error, Error} ->
+							?LOG_ERROR("Unable to complete import.~n    Node: ~p~n    Error: ~p", [ASTNode, Error]),
+							ErrorState = add_error(milang_ast:location(ASTNode), Error, WithSupport),
+							compile([], Stack, ErrorState)
+					end;
+				_ ->
+					compile([], Stack, CompileState)
 			end;
 		{ok, alias} ->
 			NewState = type_validation(ASTNode, CompileState),
-			compile([], Stack, NewState);
+			compile([], Stack, add_node(ASTNode, NewState));
 		{ok, binding} ->
 			NewState = type_validation(ASTNode, CompileState),
-			compile([], Stack, NewState);
+			compile([], Stack, add_node(ASTNode, NewState));
 		{ok, module} ->
 			Data = milang_ast:data(ASTNode),
 			ModuleName = milang_ast_module:name_as_string(Data),
 			NewState = CompileState#compile_state{ module_name = ModuleName },
-			compile([], Stack, NewState);
+			compile([], Stack, add_node(ASTNode, NewState));
 		{ok, expose} ->
-			% TODO impelment type checking
 			Data = milang_ast:data(ASTNode),
 			ExposeWhat = milang_ast_expose:declaration(Data),
 			ExposeWhatType = milang_ast:type_simply(ExposeWhat),
 			StateWithExports = maybe_add_to_exports(ExposeWhatType, ExposeWhat, CompileState),
 			NewState = type_validation(ExposeWhat, StateWithExports),
-			compile([], Stack, NewState);
+			compile([], Stack, add_node(ASTNode, NewState));
 		{ok, spec} ->
 			NewState = type_validation(ASTNode, CompileState),
-			compile([], Stack, NewState);
+			compile([], Stack, add_node(ASTNode, NewState));
 		{ok, type} ->
 			NewState = type_validation(ASTNode, CompileState),
-			compile([], Stack, NewState);
+			compile([], Stack, add_node(ASTNode, NewState));
 		{ok, class} ->
 			NewState = type_validation(ASTNode, CompileState),
-			compile([], Stack, NewState);
+			compile([], Stack, add_node(ASTNode, NewState));
 		{ok, teach} ->
 			NewState = type_validation(ASTNode, CompileState),
-			compile([], Stack, NewState);
+			compile([], Stack, add_node(ASTNode, NewState));
 		{ok, _T} ->
 			error({compile_nyi, ASTNode, Stack, CompileState})
 	end.
+
+add_node(Node, State) ->
+	OldASTBuffer = State#compile_state.ast_output_buffer,
+	NewASTBuffer = [ Node | OldASTBuffer ],
+	State#compile_state{ ast_output_buffer = NewASTBuffer }.
 
 type_validation(Node, State) ->
 	case milang_type_validation:validate_list([Node], State#compile_state.lookup_table) of
@@ -263,8 +291,8 @@ maybe_add_to_exports(_, Node, State) ->
 	?LOG_DEBUG("Don't know how to export ~p", [Node]),
 	State.
 
-write_module(AST, State) ->
-	milang_run_erlang:create_module(AST, fun(Data) ->
+write_module(State) ->
+	milang_run_erlang:create_module(State#compile_state.ast_output_buffer, fun(Data) ->
 		write_to_outfile(State, Data)
 	end).
 

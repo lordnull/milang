@@ -32,7 +32,7 @@ hello_world_test(Cfg) ->
 	ct:pal("The ast: ~p~n", [AST]),
 	OutputFile = filename:join([PrivDir, "HelloWorld"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
-	ok = milang_compile:compile(AST, [{input_file_name, "HelloWorld.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
+	ok = milang_compile:compile(AST, [{default_log_level, debug}, {input_file_name, "HelloWorld.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
 	Result = os:cmd(OutputFile),
 	?assertEqual("Hello, World!\n", Result).
 
@@ -44,7 +44,7 @@ massive_syntax_test(Cfg) ->
 	{ok, AST} = milang_lex:as_module(Tokens),
 	OutputFile = filename:join([PrivDir, "MassiveSyntaxTest"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
-	ok = milang_compile:compile(AST, [{input_file_name, "MassiveSyntaxTest.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
+	ok = milang_compile:compile(AST, [{default_log_level, debug}, {input_file_name, "MassiveSyntaxTest.milang"},{output_file_name, OutputFile},{work_dir, WorkDir}]),
 	Result = os:cmd(OutputFile),
 	?assertEqual("0\n", Result).
 
@@ -57,7 +57,7 @@ type_error_test(Cfg) ->
 	{ok, AST} = milang_lex:as_module(Tokens),
 	OutputFile = filename:join([PrivDir, "TypeError"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
-	Got = try milang_compile:compile(AST, [{input_file_name, "TypeError.milang"}, {output_file_name, OutputFile}, {work_dir, WorkDir}]) of
+	Got = try milang_compile:compile(AST, [{default_log_level, debug}, {input_file_name, "TypeError.milang"}, {output_file_name, OutputFile}, {work_dir, WorkDir}]) of
 		ok ->
 			ok
 	catch
@@ -94,7 +94,7 @@ record_test(Cfg) ->
 	{ok, AST} = milang_lex:as_module(Tokens),
 	OutputFile = filename:join([PrivDir, "RecordTest"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
-	ok = milang_compile:compile(AST, [{input_file_name, "RecordTest.milang"}, {output_file_name, OutputFile}, {work_dir, WorkDir}]),
+	ok = milang_compile:compile(AST, [{default_log_level, debug}, {input_file_name, "RecordTest.milang"}, {output_file_name, OutputFile}, {work_dir, WorkDir}]),
 	Result = os:cmd(OutputFile),
 	case Result of
 		"" ->
@@ -112,7 +112,7 @@ match_test(Cfg) ->
 	{ok, AST} = milang_lex:as_module(Tokens),
 	OutputFile = filename:join([PrivDir, "MatchTest"]),
 	WorkDir = filename:join([PrivDir, "milang-work-dir"]),
-	ok = milang_compile:compile(AST, [{input_file_name, "MatchTest.milang"}, {output_file_name, OutputFile}, {work_dir, WorkDir}]),
+	ok = milang_compile:compile(AST, [{default_log_level, info}, {write_module_log_level, debug}, {input_file_name, "MatchTest.milang"}, {output_file_name, OutputFile}, {work_dir, WorkDir}]),
 	Result = os:cmd(OutputFile),
 	case Result of
 		"" ->
