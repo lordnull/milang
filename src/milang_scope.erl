@@ -51,7 +51,7 @@ update(Key, Value, [Scope | Tail], NotFoundIn) ->
 			NewScope = Scope#{ Key => Value },
 			NewTail = [NewScope | Tail],
 			NewHead = lists:reverse(NotFoundIn),
-			{ok, lists:concat(NewHead, NewTail)}
+			{ok, lists:concat([NewHead, NewTail])}
 	end.
 
 foldl(Folder, Init, Scope) ->

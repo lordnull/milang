@@ -257,23 +257,6 @@ lookup_for_alias(OriginalNode, Symbols) ->
 			{error, unsupported_node_type}
 	end.
 
-%import_module([ Node | Tail], Symbols) ->
-%	Type = milang_ast:type_simply(Node),
-%	NewSymbols = import_module(Type, milang_ast:data(Node), Symbols),
-%	import_module(Tail, NewSymbols);
-%
-%import_module(undefined, Symbols) ->
-%	?LOG_ERROR("wut? no import ast!"),
-%	Symbols;
-%
-%import_module(ImportData, Symbols) ->
-%	ImportAST = milang_ast_import:imported_ast(ImportData),
-%	import_module(ImportAST, Symbols).
-%
-%import_module(Type, _Data, Symbols) ->
-%	?LOG_ERROR("unknonw type ~p for import", [Type]),
-%	Symbols.
-
 write_function_body(Node, Symbols, WriteFun) ->
 	Type = milang_ast:type(Node),
 	Data = milang_ast:data(Node),
@@ -367,11 +350,6 @@ write_expression(Expression, Symbols) ->
 	Data = milang_ast:data(Expression),
 	write_expression(Type, Data, Symbols).
 
-%write_expression(infix_series, Data) ->
-	% TODO change infix_series into infix_tree during compile step. This will
-	% happen after the lexer pass, before the type checker. And because the
-	% type checker happens before this step (or will, at least), it will
-	% also be here.
 write_expression({ok, infix_tree}, Tree, Symbols) ->
 	Notation = milang_ast_infix_tree:notation(Tree),
 	Left = milang_ast_infix_tree:left(Tree),
@@ -677,107 +655,3 @@ identifier_as_string(#{ module := M, local := L}) ->
 	[M, $., L];
 identifier_as_string(L) ->
 	L.
-
-%
-%			as_erlang(call, milang_ast:data(Node), Scope)
-%			milang_ast_call:as_erlang(milang_ast:data(Node), Scope);
-%		construct ->
-%			milang_ast_construct:as_erlang(milang_ast:data(Node), Scope);
-%		function ->
-%			milang_ast_function:as_erlang(milang_ast:data(Node), Scope);
-%		infix_series ->
-%			milang_ast_infix_series:as_erlang(milang_ast:data(Node), Scope);
-%		_ ->
-%			{error, {nyi, expression, Node, Scope}}
-%	end.
-%
-%
-%
-%
-%
-%
-%as_erlang(Rec, _Scope = module) ->
-%	MatchNode = match(Rec),
-%	Expression = expression(Rec),
-%	MatchType = milang_ast:type(MatchNode),
-%	ExpressionType = milang_ast:type(Expression),
-%	case MatchType of
-%		identifier_bound ->
-%			ExpressionChars = milang_ast_expression:as_erlang(milang_ast:data(Expression), module),
-%			{identifier_bound, Name} = milang_ast:data(MatchNode),
-%			FuncDefine = io_lib:format("'~s'() ->~n\n", [Name]),
-%			{ok, [FuncDefine, ExpressionChars, "\n\n"]};
-%		_ ->
-%			{error, {nyi, as_erlang, Rec, module}}
-%	end.
-%
-%
-
-
-
-
-
-%	#declaration_function{ name = Name, args = Args, expression = MaybeInfixBody} = InfixAST#milang_ast.data,
-%	{Body, InfixState} = case milang_infix_tree:from_ast(MaybeInfixBody) of
-%		{ok, B} ->
-%			{B, StatsPreTypeCheck};
-%		{error, InfixTreeError} ->
-%			{MaybeInfixBody, add_error(InfixAST#milang_ast.location, {invalid_expression, InfixTreeError, MaybeInfixBody}, StatsPreTypeCheck)}
-%	end,
-%	AST = milang_ast:transform_data(fun(R) ->
-%		R#declaration_function{ expression = Body}
-%	end, InfixAST),
-%	State = type_checking(AST, InfixState),
-%	Arity = length(Args),
-%	{_, LocalName} = Name,
-%	Exported = io_lib:format("'~s'() -> milang_curry:stack(fun ~s/~p).~n~n", [LocalName, LocalName, Arity]),
-%	ok = write_to_outfile(State, Exported),
-%	ok = ?LOG_DEBUG("ye old args: ~p", [Args]),
-%	ArgsList = [milang_arg_to_erlang_arg(A) || A <- Args],
-%	ArgsJoined = lists:join($,, ArgsList),
-%	FunctionHead = io_lib:format("'~s'(~s) ->~n", [LocalName, ArgsJoined]),
-%	ok = write_to_outfile(State, FunctionHead),
-%	Frame = #stack_frame{ ast = AST, output_buffer = ".\n"},
-%	compile(Body, [Frame | Stack], State);
-
-
-
-
-% from milang_ast_function
-%as_erlang(Data, _Scope = module) ->
-	% TODO
-	% how to turn let ln = System.Print.ln into valid usable erlang.
-
-% from milang_compile.
-%	ok = module_preamble(State),
-%	Declarations = lists:reverse(State#compile_state.ast_output_buffer),
-%	write_declarations(Declarations, State#compile_state.output_file_handle).
-%
-%module_preamble(NewState) ->
-%	ModuleName = NewState#compile_state.module_name,
-%	OutputFmt = "-module('~s').~n"
-%	"-export([~s]).~n"
-%	"-export_type([~s]).~n~n",
-%	Functions = NewState#compile_state.function_exports,
-%	Types = NewState#compile_state.type_exports,
-%	FunctionExportsList = [io_lib:format("'~s'/0~n", [A]) || {_, A} <- Functions],
-%	FunctionExprts = lists:join($,, FunctionExportsList),
-%	TypeExportsList = [ io_lib:format("'~s'/0~n", [A]) || {_, A} <- Types],
-%	TypeExports = lists:join($,, TypeExportsList),
-%	Output = io_lib:format(OutputFmt, [ModuleName, FunctionExprts, TypeExports]),
-%	write_to_outfile(NewState, Output).
-%
-%write_declarations([], _) ->
-%	ok;
-%write_declarations([ Dec | Tail], FileHandle) ->
-%	ok = write_declaration(Dec, FileHandle),
-%	write_declaration(Tail, FileHandle).
-%
-%write_declaration(Node, FileHandle) ->
-%	case milang_ast:type(Node) of
-%		binding ->
-%			{ok, Chars} = milang_ast_binding:as_erlang(milang_ast:data(Node), module),
-%			io:put_chars(FileHandle, Chars);
-%		_ ->
-%			?LOG_DEBUG("Not writing node ~p to outfile.", [Node])
-%	end

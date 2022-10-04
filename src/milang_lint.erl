@@ -2,8 +2,6 @@
 %%% compiler failures, are still "wrong" in the opinion of the language.
 -module(milang_lint).
 
--include("milang_ast.hrl").
-
 -export([it/2]).
 
 %-record(state, {

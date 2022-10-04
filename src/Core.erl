@@ -311,14 +311,14 @@ compare(A, B) ->
 
 '>'(A, B) ->
 	Compared = compare(A, B),
-	'GreaterThan' =:= Compared.
+	'GreaterThan'() =:= Compared.
 
 ?curried('>', 2).
 
 '>='(A, B) ->
 	Compared = compare(A, B),
-	'GreaterThan' =:= Compared
-		orelse 'EqualTo' =:= Compared.
+	'GreaterThan'() =:= Compared
+		orelse 'EqualTo'() =:= Compared.
 
 ?curried('>=', 2).
 

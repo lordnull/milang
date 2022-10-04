@@ -1,8 +1,6 @@
 %%% @doc Module that holds the type / constructor for milang's ast forms.
 -module(milang_ast).
 
--include("milang_ast.hrl").
-
 -type name() :: unicode:chardata().
 
 -type location() :: {non_neg_integer(), non_neg_integer()}.

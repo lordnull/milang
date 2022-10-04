@@ -3,6 +3,7 @@
 -export(
 	[ 'Nothing'/0
 	, 'Some'/0
+	, 'Some'/1
 	, map/0
 	, and_then/0
 	, with_default/2

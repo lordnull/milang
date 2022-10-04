@@ -37,7 +37,7 @@ map() ->
 	milang_curry:stack(fun lists:map/2).
 
 head() ->
-	milang_curry:stach(fun head/1).
+	milang_curry:stack(fun head/1).
 
 head([]) ->
 	'Maybe':'Nothing'();

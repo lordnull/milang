@@ -3,7 +3,6 @@
 
 -include_lib("kernel/include/file.hrl").
 -include_lib("kernel/include/logger.hrl").
--include("milang_ast.hrl").
 -include("milang_constant_import.hrl").
 
 -export(
@@ -312,23 +311,6 @@ maybe_close_outfile(State) ->
 	Handle = State#compile_state.output_file_handle,
 	ok = file:close(Handle),
 	State#compile_state{ output_file_handle = undefined }.
-
-%declaration_module(Name, State) ->
-%	InputFile = State#compile_state.input_file_name,
-%	ModuleNameAsString = case milang_ast:data(Name) of
-%		{_, #{ module := M, local := L}} ->
-%			unicode:characters_to_binary([M, $., L]);
-%		{_, L} ->
-%			L
-%	end,
-%	NewErrors = case filename:rootname(filename:basename(InputFile)) of
-%		ModuleNameAsString ->
-%			State#compile_state.errors;
-%		_ ->
-%			[{{0,0}, {module_name_file_name_mismatch}} | State#compile_state.errors]
-%	end,
-%	State#compile_state{ module_name = ModuleNameAsString, function_exports = [], type_exports = [], errors = NewErrors}.
-%
 
 import_module(Node, State) ->
 	Data = milang_ast:data(Node),

@@ -1,6 +1,5 @@
 -module(milang_lex).
 
--include("milang_ast.hrl").
 -include_lib("kernel/include/logger.hrl").
 
 -export([as_module/1, as_header/1, it/2]).
@@ -27,10 +26,6 @@ option(_, Acc) ->
 -spec it([ milang_p_token:token() ], [{mode, header | module}]) -> {ok, [ milang_ast:ast_node() ]} | {error, term()}.
 it(Tokens, Options) ->
 	root(Tokens, options(Options)).
-
-%-spec iolist_to_atom(unicode:chardata()) -> atom().
-%iolist_to_atom(Iolist) ->
-%	binary_to_atom(unicode:characters_to_binary(Iolist), utf8).
 
 -spec root([ milang_p_token:token() ], options()) -> {error, term()} | {ok, [ milang_ast:ast_node()]}.
 root(Tokens, Options) ->
@@ -157,18 +152,16 @@ expose_declaration({declaration, ExposedProtoNode}, ProtoNode, [{keyword, _, 'al
 		Error ->
 			Error
 	end;
-%expose_declaration(declaration, ProtoNode, [{keyword, _, 'class'} | Tokens], Options) ->
-%	case declaration_class(ProtoNode, Tokens, Options) of
-%		{ok, Declaration, NewTokens} ->
-%			FinalNode = milang_ast:transform_data(fun(Class) -> milang_class:exposed(true, Class) end, Declaration),
-%			{ok, FinalNode, NewTokens};
-%		Error ->
-%			Error
-%	end;
-expose_declaration(declaration, ProtoNode, [{keyword, _, 'class'} | _Tokens], _Options) ->
-	{error, {nyi, class, ProtoNode}};
-expose_declaration(declaration, _ProtoNode, [Token | _], _Options) ->
-	lex_error(Token, ['class', 'type', 'alias', 'spec'], simple_expose).
+expose_declaration({declaration, ExposedProtoNode}, ProtoNode, [{keyword, _, 'class'} | Tokens], Options) ->
+	case declaration_class(ExposedProtoNode, Tokens, Options) of
+		{ok, Declaration, NewTokens} ->
+			FinalNode = milang_ast:transform_data(fun(_) -> milang_ast_expose:new(Declaration) end, ProtoNode),
+			{ok, FinalNode, NewTokens};
+		Error ->
+			Error
+	end;
+expose_declaration({declaration, ExposedProtoNode}, _ProtoNode, [Token | _], _Options) ->
+	lex_error(Token, ['class', 'type', 'alias', 'spec'], {simple_expose, {declaration, ExposedProtoNode}}).
 
 expose_all_declaration(ProtoNode, Tokens, Options) ->
 	expose_all_declaration(consume_whitespace, ProtoNode, Tokens, Options).
@@ -416,8 +409,10 @@ declaration_class({args, ArgAcc, NameNode}, ProtoNode, Tokens, Options) ->
 			{_, MoreComments, CosntraintsStart} = space(Tail),
 			ConstraintsNode = milang_ast:ast_node(L, [Comments, MoreComments]),
 			declaration_class({constraints, ConstraintsNode, ArgAcc, NameNode}, ProtoNode, CosntraintsStart, Options);
-		{true, Comments, [{syntax_bind, _, _} | Tail]} ->
-			declaration_class({members, [], undefined, ArgAcc, NameNode}, ProtoNode, Comments ++ Tail, Options)
+		{true, Comments, [{syntax_bind, L, _} | Tail]} ->
+			Constraints = milang_ast_constraints:new([]),
+			ConstraintsNode = milang_ast:ast_node(L, [], Constraints),
+			declaration_class({members, [], ConstraintsNode, ArgAcc, NameNode}, ProtoNode, Comments ++ Tail, Options)
 	end;
 
 declaration_class({constraints, ConstraintsProtoNode, ArgNodes, NameNode}, ProtoNode, Tokens, Options) ->
@@ -440,7 +435,7 @@ declaration_class({syntax_bind, Constraints, ArgNodes, NameNode}, ProtoNode, Tok
 declaration_class({members, MembersAcc, Constraints, Args, Name}, ProtoNode, Tokens, Options) ->
 	{_, Comments, TokensSansSpace} = space(Tokens),
 	[{_, L, _} = Head | TokenTail ] = TokensSansSpace,
-	MemberProtoNode = milang_ast:ast_node(Comments, L),
+	MemberProtoNode = milang_ast:ast_node(L, Comments),
 	case Head of
 		{keyword, _, 'let'} ->
 			case declaration_let(MemberProtoNode, TokenTail, Options) of
@@ -954,217 +949,6 @@ to_matching_close(Open, [{syntax_open, _, _} = NewOpen | Tail], Acc, Options) ->
 to_matching_close(Open, [T | Tail], Acc, Options) ->
 	to_matching_close(Open, Tail, [T | Acc], Options).
 
-%
-%type_function(Tokens, Options) ->
-%	type_function({start_arg, []}, Tokens, Options).
-%
-%type_function({start_arg, ArgsAcc}, Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case TokensSansSpace of
-%		[{identifier_ignored, L, Data} | Rest] ->
-%			ProtoNode = milang_ast:ast_node(L, Comments),
-%			Node = milang_ast:transform_data(fun(_) -> {identifier_ignored, Data} end, ProtoNode),
-%			type_function({implies_or_done, [Node | ArgsAcc]}, Rest, Options);
-%		[{syntax_open, _, subexpression} = Open | Tail] ->
-%			type_function({open_subexpression, Comments, Open, ArgsAcc}, Tail, Options);
-%		[{syntax_open, _, record} | _] ->
-%			type_function({type_record, ArgsAcc}, Tokens, Options);
-%		_ ->
-%			case identifier(TokensSansSpace, Options) of
-%				{ok, ProtoNode, Rest} ->
-%					Node = milang_ast:pre_doc(Comments, ProtoNode),
-%					type_function({type_concrete, ArgsAcc}, Tokens, Options);
-%				Error ->
-%					Error
-%			end
-%	end;
-%
-%type_function({implies_or_done, Args}, Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case TokensSansSpace of
-%		[{syntax_implies, _, _} | Rest] ->
-%			type_function({start_arg, Args}, Comments ++ Rest, Options);
-%		_ ->
-%			type_function({done, Args}, Tokens, Options)
-%	end;
-%
-%type_function({type_record, ArgsAcc}, Tokens, Options) ->
-%	case type_record(Tokens, Options) of
-%		{ok, Node, NewTokens} ->
-%			type_function({implies_or_done, [ Node | ArgsAcc ]}, NewTokens, Options);
-%		Error ->
-%			Error
-%	end;
-%
-%type_function({type_concrete, ArgsAcc}, Tokens, Options) ->
-%	case type_concrete(Tokens, Options) of
-%		{ok, Type, NewTokens} ->
-%			type_function({implies_or_done, [Type | ArgsAcc]}, NewTokens, Options);
-%		Error ->
-%			Error
-%	end;
-%
-%type_function({open_subexpression, Comments, Open, ArgsAcc}, Tokens, Options) ->
-%	case to_matching_close(Open, Tokens, Options) of
-%		{ok, Open, Chomped, _Close, NewTokens} ->
-%			type_function({subexpression, Comments, Chomped, ArgsAcc}, NewTokens, Options);
-%		Error ->
-%			Error
-%	end;
-%
-%type_function({subexpression, Comments, Chomped, ArgsAcc}, Tokens, Options) ->
-%	case type_function(Chomped, Options) of
-%		{ok, Type, NewTokens} ->
-%			NewType = milang_ast:ins_doc(Comments, Type),
-%			type_function({implies_or_done, [NewType | ArgsAcc]}, NewTokens ++ Tokens, Options);
-%		Error ->
-%			Error
-%	end;
-%
-%type_function({done, Args}, Tokens, _) ->
-%	case Args of
-%		[T] ->
-%			{ok, T, Tokens};
-%		_ ->
-%			[FirstNode | _ ] = All = lists:reverse(Args),
-%			Location = milang_ast:location(FirstNode),
-%			Node = milang_ast:ast_node(Location, <<>>, #type_function{ args = All}),
-%			{ok, Node, Tokens}
-%	end.
-%
-%type_concrete(Tokens, Options) ->
-%	type_concrete(space_then_name, Tokens, Options).
-%
-%type_concrete(space_then_name, Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case identifier(TokensSansSpace, Options) of
-%		{ok, Identifier, NewTokens} ->
-%			{_, L, _} = hd(TokensSansSpace),
-%			ProtoNode = milang_ast:ast_node(L, Comments),
-%			type_concrete({space_then, Identifier, ProtoNode}, NewTokens, Options);
-%		Error ->
-%			Error
-%	end;
-%
-%type_concrete({space_then, Identifier, ProtoNode}, Tokens, Options) ->
-%	case space(Tokens) of
-%		{true, Comments, TokensSansSpace} ->
-%			case hd(TokensSansSpace) of
-%				{syntax_implies, _, _} ->
-%
-%type_concrete({name, ProtoNode}, Tokens, Options) ->
-%	case identifier(Tokens, Options) of
-%		{ok, Name, NewTokens} ->
-%			NewNode = milang_ast:transform_data(fun(M) -> M#type_concrete{ name = Name } end, ProtoNode),
-%			type_concrete({start_arg, [], NewNode}, NewTokens, Options);
-%		Error ->
-%			Error
-%	end;
-%
-%type_concrete({start_arg, ArgAcc, ProtoNode}, Tokens, Options) ->
-%	{HasSpace, Comments, TokensSansSpace} = space(Tokens),
-%	case {HasSpace, TokensSansSpace} of
-%		{true, [{name_downcase, L, Iodata} | Rest]} ->
-%			Node = milang_ast:ast_node(L, Comments, #type_variable{ name = {name_downcase, iolist_to_atom(Iodata)}}),
-%			type_concrete({start_arg, [Node | ArgAcc], ProtoNode}, Rest, Options);
-%		{_, [{syntax_open, _, subexpression} = Open | Rest]} ->
-%			type_concrete({open_subexpression, Comments, Open, ArgAcc, ProtoNode}, Rest, Options);
-%		{true, [{name_upcase, L, _} | _]} ->
-%			type_concrete({zero_arg_type, L, Comments, ArgAcc, ProtoNode}, TokensSansSpace, Options);
-%		{_, _} ->
-%			Args = lists:reverse(ArgAcc),
-%			Node = milang_ast:transform_data(fun(M) -> M#type_concrete{ args = Args } end, ProtoNode),
-%			{ok, Node, Tokens}
-%	end;
-%
-%type_concrete({open_subexpression, Comments, Open, ArgAcc, ProtoNode}, Tokens, Options) ->
-%	case to_matching_close(Open, Tokens, Options) of
-%		{ok, Open, Chomped, _Close, NewTokens} ->
-%			type_concrete({subexpression, Comments, Chomped, ArgAcc, ProtoNode}, NewTokens, Options);
-%		Error ->
-%			Error
-%	end;
-%
-%type_concrete({subexpression, Comments, Chomped, ArgAcc, ProtoNode}, Tokens, Options) ->
-%	case type_function(Chomped, Options) of
-%		{ok, TypeProtoNode, NewTokens} ->
-%			TypeNode = milang_ast:ins_doc(Comments, TypeProtoNode),
-%			type_concrete({start_arg, [TypeNode | ArgAcc], ProtoNode}, NewTokens ++ Tokens, Options);
-%		Error ->
-%			Error
-%	end;
-%
-%type_concrete({zero_arg_type, L, Comments, ArgAcc, ProtoNode}, Tokens, Options) ->
-%	case identifier(Tokens, Options) of
-%		{ok, Name, NewTokens} ->
-%			Arg = milang_ast:ast_node(L, Comments, #type_concrete{ name = Name, args = [] }),
-%			type_concrete({start_arg, [ Arg | ArgAcc], ProtoNode}, NewTokens, Options);
-%		Error ->
-%			Error
-%	end.
-%
-%type_record(Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case TokensSansSpace of
-%		[{syntax_open, L, record} | Tail] ->
-%			ProtoNode = milang_ast:type_record(milang_ast:ast_node(L, Comments), []),
-%			type_record({field_start_or_done, ProtoNode}, Tail, Options);
-%		[T | _] ->
-%			lex_error(T, syntax_open_record, {type_record, init})
-%	end.
-%
-%type_record({field_start_or_done, ProtoNode}, Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case TokensSansSpace of
-%		[{syntax_element_seperator, _, _} | Tail] ->
-%			type_record({field_name, ProtoNode}, Comments ++ Tail, Options);
-%		[{syntax_close, _, record} | Tail] ->
-%			% while order of record fields doesn't matter from a syntactic or
-%			% grammer perspective, preserving the order makes testing easier.
-%			% is is because now if you read in, lex, and to_string out the ast,
-%			% you'll get the same thing.
-%			Node = milang_ast:transform_data(fun(D) ->
-%				D#type_record{ fields = lists:reverse(D#type_record.fields)}
-%			end, ProtoNode),
-%			{ok, Node, Comments ++ Tail};
-%		[T | _] ->
-%			lex_error(T, [syntax_close_recordd, syntax_element_seperator], {type_record, {field_start_or_done, ProtoNode}})
-%	end;
-%
-%type_record({field_name, ProtoNode}, Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case TokensSansSpace of
-%		[{name_downcase, L, Iodata} | Tail] ->
-%			Name = {name_downcase, iolist_to_atom(Iodata)},
-%			ProtoField = milang_ast:ast_node(L, Comments, #type_record_field{ name = Name }),
-%			type_record({field_bind, ProtoField, ProtoNode}, Tail, Options);
-%		[T | _] ->
-%			lex_error(T, [name_downcase], {type_record, {field_name, ProtoNode}})
-%	end;
-%
-%type_record({field_bind, ProtoField, ProtoNode}, Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case TokensSansSpace of
-%		[{syntax_bind, _, _} | Tail] ->
-%			type_record({field_type, ProtoField, ProtoNode}, Comments ++ Tail, Options);
-%		[T | _] ->
-%			lex_error(T, [syntax_bind], {type_record, {field_bind, ProtoField, ProtoNode}})
-%	end;
-%
-%type_record({field_type, ProtoField, ProtoNode}, Tokens, Options) ->
-%	case type(Tokens, Options) of
-%		{ok, TypeNode, NewTokens} ->
-%			FieldNode = milang_ast:transform_data(fun(D) ->
-%				D#type_record_field{ type = TypeNode }
-%			end, ProtoField),
-%			NewNode = milang_ast:transform_data(fun(D) ->
-%				D#type_record{ fields = [ FieldNode | D#type_record.fields ]}
-%			end, ProtoNode),
-%			type_record({field_start_or_done, NewNode}, NewTokens, Options);
-%		Error ->
-%			Error
-%	end.
-
 identifier_bound([{identifier_bound, L, Data} | Tail], _Options) ->
 	Node = milang_ast:ast_node(L, [], {identifier_bound, Data}),
 	{ok, Node, Tail};
@@ -1176,21 +960,6 @@ identifier_type([{identifier_type, L, Data} | Tail], _Options) ->
 	{ok, Node, Tail};
 identifier_type(Tokens, _Options) ->
 	lex_error(hd(Tokens), identifier_type, {identifier_type, Tokens}).
-
-%identifier_ignored([{identifier_ignored, L, Data} | Tail], _Options) ->
-%	Node = milang_ast:ast_node(L, [], {identifier_ignored, Data}),
-%	{ok, Node, Tail};
-%identifier_ignored(Tokens, _Options) ->
-%	lex_error(hd(Tokens), identifier_ignored, {identifier_ignored, Tokens}).
-
-%identifier_bindable([{identifier_ignored, L, Data} | Tail], _Options) ->
-%	Node = milang_ast:ast_node(L, [], {identifier_ignored, Data}),
-%	{ok, Node, Tail};
-%identifier_bindable([{identifier_bound, L, Data} | Tail], _Options) ->
-%	Node = milang_ast:ast_node(L, [], {identifier_bound, Data}),
-%	{ok, Node, Tail};
-%identifier_bindable(Tokens, _Options) ->
-%	lex_error(hd(Tokens), [identifier_bound, identifier_ignored], {identifier_bindable, Tokens}).
 
 declaration_module(Location, Comments, Options, Tokens) ->
 	ProtoNode = milang_ast:ast_node(Location, Comments, milang_ast_module:new(<<>>)),
@@ -1582,7 +1351,7 @@ match_head({part, Finish}, ProtoNode, Tokens, Options) ->
 			end, ProtoNode),
 			match_head(Finish, Node, Tail, Options);
 		[{identifier_type, L, _Name} | _Tail] ->
-			MatchTypeProtoNode = milang_ast:ast_node(Comments, L),
+			MatchTypeProtoNode = milang_ast:ast_node(L, Comments),
 			case match_type(MatchTypeProtoNode, TokensSansSpace, Options) of
 				{ok, Node, NewTokens} ->
 					match_head(Finish, Node, NewTokens, Options);
@@ -1590,7 +1359,7 @@ match_head({part, Finish}, ProtoNode, Tokens, Options) ->
 					Error
 			end;
 		[{syntax_open, L, list} | Tail] ->
-			MatchListProtoNode = milang_ast:ast_node(Comments, L),
+			MatchListProtoNode = milang_ast:ast_node(L, Comments),
 			case match_list(MatchListProtoNode, Tail, Options) of
 				{ok, NewData, NewTokens} ->
 					Node = milang_ast:transform_data(fun(_) ->
@@ -1634,33 +1403,33 @@ match_type({gather_args, ArgAcc, TypeName}, ProtoNode, Tokens, Options) ->
 		{false, _, _} ->
 			lex_error(hd(Tokens), space, {match_type, {gather_args, ArgAcc, TypeName, ProtoNode}});
 		{_, Comments, [{identifier_ignored, L, Name} | Tail ]} ->
-			Node = milang_ast:ast_node(Comments, L, {identifier_ignored, Name}),
+			Node = milang_ast:ast_node(L, Comments, {identifier_ignored, Name}),
 			NewAcc = [ Node | ArgAcc],
 			match_type({gather_args, NewAcc, TypeName}, ProtoNode, Tail, Options);
 		{_, Comments, [{identifier_bound, L, Name} | Tail]} ->
-			Node = milang_ast:ast_node(Comments, L, {identifier_bound, Name}),
+			Node = milang_ast:ast_node(L, Comments, {identifier_bound, Name}),
 			NewAcc = [ Node | ArgAcc],
 			match_type({gather_args, NewAcc, TypeName}, ProtoNode, Tail, Options);
 		{_, Comments, [{literal_string, L, S} | Tail]} ->
-			Node = milang_ast:ast_node(Comments, L, {literal_string, S}),
+			Node = milang_ast:ast_node(L, Comments, {literal_string, S}),
 			NewAcc = [ Node | ArgAcc],
 			match_type({gather_args, NewAcc, TypeName}, ProtoNode, Tail, Options);
 		{_, Comments, [{literal_integer, L, N} | Tail]} ->
-			Node = milang_ast:ast_node(Comments, L, {literal_integer, N}),
+			Node = milang_ast:ast_node(L, Comments, {literal_integer, N}),
 			NewAcc = [ Node | ArgAcc],
 			match_type({gather_args, NewAcc, TypeName}, ProtoNode, Tail, Options);
 		{_, Comments, [{literal_float, L, N} | Tail]} ->
-			Node = milang_ast:ast_node(Comments, L, {literal_float, N}),
+			Node = milang_ast:ast_node(L, Comments, {literal_float, N}),
 			NewAcc = [ Node | ArgAcc],
 			match_type({gather_args, NewAcc, TypeName}, ProtoNode, Tail, Options);
 		{_, Comments, [{identifier_type, L, Name} | Tail]} ->
-			SubProto = milang_ast:ast_node(Comments, L),
+			SubProto = milang_ast:ast_node(L, Comments),
 			NameNode = milang_ast:ast_node(L, [], milang_ast_identifier:type(Name)),
 			{ok, Node, Tail} = match_type({finish, [], NameNode}, SubProto, Tail, Options),
 			NewAcc = [ Node | ArgAcc],
 			match_type({gather_args, NewAcc, TypeName}, ProtoNode, Tail, Options);
 		{_, Comments, [{syntax_open, L, list} | Tail]} ->
-			MatchListProtoNode = milang_ast:ast_node(Comments, L),
+			MatchListProtoNode = milang_ast:ast_node(L, Comments),
 			case match_list(MatchListProtoNode, Tail, Options) of
 				{ok, Node, NewTokens} ->
 					NewAcc = [ Node | ArgAcc],
@@ -1677,7 +1446,7 @@ match_type({gather_args, ArgAcc, TypeName}, ProtoNode, Tokens, Options) ->
 				Error ->
 					Error
 			end;
-		[E | _] ->
+		{_, _, [E | _]} ->
 			lex_error(E, [identifier_bound, identifier_type, identifier_ignored, literal_float, literal_string, literal_integer, syntax_open_list], {match_head, {start, ProtoNode}})
 	end;
 
@@ -1837,92 +1606,6 @@ expression_function({dot, Expr, Binds, Args}, ProtoNode, Tokens, _Options) ->
 		_ ->
 			lex_error(hd(TokensSansSpace), [dot], {expression_function, {dot, Expr, Binds, Args}})
 	end.
-%
-%expression_record(Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case TokensSansSpace of
-%		[{syntax_open, L, record} | Tail] ->
-%			ProtoNode = milang_ast:ast_node(L, Comments, #expression_record{}),
-%			expression_record({post_open, ProtoNode}, Tail, Options);
-%		[T | _] ->
-%			lex_error(T, syntax_open_record, {expression_record, init})
-%	end.
-%
-%expression_record({post_open, ProtoNode}, Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case TokensSansSpace of
-%		[{name_downcase, _, Iodata} | Tail] ->
-%			Name = {name_downcase, iolist_to_atom(Iodata)},
-%			expression_record({field_access_or_record_update, Name, ProtoNode}, Tail, Options);
-%		[{syntax_element_seperator, _, _} | _] ->
-%			expression_record({field_start_or_done, ProtoNode}, Tokens, Options);
-%		[{syntax_close, _, record} | Tail] ->
-%			{ok, ProtoNode, Comments ++ Tail};
-%		[T | _] ->
-%			lex_error(T, [name_downcase, syntax_element_seperator, syntax_close_record], {expression_record, {post_open, ProtoNode}})
-%	end;
-%
-%expression_record({field_access_or_record_update, Name, ProtoNode}, Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case TokensSansSpace of
-%		[{syntax_close, _, record} | Tail] ->
-%			Node = milang_ast:transform_data(fun(_) ->
-%				#record_field_access{ name = Name }
-%			end, ProtoNode),
-%			{ok, Node, Comments ++ Tail};
-%		[{name_symbol, _, [$|]} | Tail] ->
-%			Node = milang_ast:transform_data(fun(D) ->
-%				D#expression_record{ base_reference = Name}
-%			end, ProtoNode),
-%			expression_record({field_start_or_done, Node}, Comments ++ Tail, Options);
-%		[T | _] ->
-%			lex_error(T, [syntax_close_record, syntax_collection_update], {expression_record, {field_access_or_record_update, Name, ProtoNode}})
-%	end;
-%
-%expression_record({field_start_or_done, ProtoNode}, Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case TokensSansSpace of
-%		[{syntax_element_seperator, _, _} | Tail] ->
-%			expression_record({field_name, ProtoNode}, Comments ++ Tail, Options);
-%		[{syntax_close, _, record} | Tail] ->
-%			{ok, ProtoNode, Comments ++ Tail};
-%		[T | _] ->
-%			lex_error(T, [syntax_element_seperator], {expression_record, {field_start_or_done, ProtoNode}})
-%	end;
-%
-%expression_record({field_name, ProtoNode}, Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case TokensSansSpace of
-%		[{name_downcase, L, Iodata} | Tail] ->
-%			FieldNode = milang_ast:ast_node(L, Comments, #expression_record_field{ name = {name_downcase, iolist_to_atom(Iodata)}}),
-%			expression_record({field_bind, FieldNode, ProtoNode}, Tail, Options);
-%		[T | _] ->
-%			lex_error(T, name_downcase, {expression_record, {field_name, ProtoNode}})
-%	end;
-%
-%expression_record({field_bind, ProtoField, ProtoNode}, Tokens, Options) ->
-%	{_, Comments, TokensSansSpace} = space(Tokens),
-%	case TokensSansSpace of
-%		[{syntax_bind, _, _} | Tail] ->
-%			expression_record({field_expression, ProtoField, ProtoNode}, Comments ++ Tail, Options);
-%		[T | _] ->
-%			lex_error(T, syntax_bind, {expression_record, {field_bind, ProtoField, ProtoNode}})
-%	end;
-%
-%expression_record({field_expression, ProtoField, ProtoNode}, Tokens, Options) ->
-%	case expression(Tokens, Options) of
-%		{ok, ExpressionNode, NewTokens} ->
-%			FieldNode = milang_ast:transform_data(fun(D) ->
-%				D#expression_record_field{ expression = ExpressionNode }
-%			end, ProtoField),
-%			NewNode = milang_ast:transform_data(fun(D) ->
-%				D#expression_record{ fields = [FieldNode| D#expression_record.fields ]}
-%			end, ProtoNode),
-%			expression_record({field_start_or_done, NewNode}, NewTokens, Options);
-%		Error ->
-%			Error
-%	end.
-
 
 expression_call(Name, ProtoNode, Tokens, Options) ->
 	expression_call({space_or_done, Name, [], ProtoNode}, Tokens, Options).
