@@ -8,7 +8,7 @@
 
 -spec string(unicode:unicode_binary()) -> {ok, milang_ast(), unicode:unicode_binary()} | {error, term()}.
 string(Binary) ->
-	parse:it(Binary, milang_p_token:tokens()).
+	parse:string(Binary, milang_p_token:tokens()).
 
 -spec file(file:filename()) -> {ok, milang_ast()} | {error, term()}.
 file(Filename) ->
@@ -26,34 +26,22 @@ file(Filename) ->
 -spec parse_file(file:io_device()) -> {ok, milang_ast()} | {error, term()}.
 parse_file(Handle) ->
 	InitalRead = io:get_chars(Handle, <<>>, ?chunk_size),
-	parse_file(InitalRead, Handle, _TokenAcc = [], _StringLeft = <<>>).
+	parse_file(InitalRead, Handle, _DataAcc = []).
 
--spec parse_file(binary() | unicode:unicode_binary() | string() | io:server_no_data(), file:io_device(), milang_ast(), unicode:chardata()) -> {ok, milang_ast()} | {error, term()}.
-parse_file(eof, _Handle, AstAcc, <<>>) ->
-	?LOG_DEBUG("Parse complete for file."),
-	{ok, AstAcc};
-parse_file(eof, _Handle, AstAcc, LeftOverChars) ->
-	String = unicode:characters_to_binary(LeftOverChars),
-	case string(String) of
-		{ok, NewParts, <<>>} ->
-			{ok, NewParts ++ AstAcc};
-		{ok, _NewParts, NewLeftOverChars} ->
-			?LOG_DEBUG("Reached the end of the file, but the parser has left over characters."),
-			{error, {trailing_characters, NewLeftOverChars}};
+-spec parse_file(binary() | unicode:unicode_binary() | string() | io:server_no_data(), file:io_device(), unicode:chardata()) -> {ok, milang_ast()} | {error, term()}.
+parse_file(eof, _Handle, FileContents) ->
+	case string(unicode:characters_to_binary(FileContents)) of
+		{ok, _} = Ok ->
+			?LOG_DEBUG("Parse complete for file."),
+			Ok;
 		Error ->
-			?LOG_DEBUG("Error parsing data read from the file: ~p", [Error]),
+			?LOG_DEBUG("Error parsing data already read from the file: ~p", [Error]),
 			Error
 	end;
-parse_file({error, Error}, _Handle, _AstAcc, _LeftOverChars) ->
-	?LOG_DEBUG("Error reading the file: ~p", [Error]),
-	{error, {read_error, Error}};
-parse_file(Data, Handle, AstAcc, LeftOverChars) ->
-	String = unicode:characters_to_binary([Data, LeftOverChars]),
-	case string(String) of
-		{ok, NewParts, NewLeftOverChars} ->
-			NewRead = io:get_chars(Handle, <<>>, ?chunk_size),
-			parse_file(NewRead, Handle, AstAcc ++ NewParts, NewLeftOverChars);
-		{error, _} ->
-			NewRead = io:get_chars(Handle, <<>>, ?chunk_size),
-			parse_file(NewRead, Handle, AstAcc, [Data, LeftOverChars])
-	end.
+parse_file({error, ReadError}, _Handle, _FileContents) ->
+	?LOG_DEBUG("Error reading the file: ~p", [ReadError]),
+	{error, {read_error, ReadError}};
+parse_file(Data, Handle, FileContents) ->
+	NewRead = io:get_chars(Handle, <<>>, ?chunk_size),
+	?LOG_DEBUG("Reading next chunk of data..."),
+	parse_file(NewRead, Handle, [Data | FileContents]).

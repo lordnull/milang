@@ -125,7 +125,7 @@ as_tree(Node) ->
 			Head = milang_ast_infix_series:head(Data),
 			Ops = milang_ast_infix_series:ops(Data),
 			ResWeightToAssoc = weight_to_assoc(Ops),
-			'Result':map(fun(WeightToAssocMap) ->
+			result:map(fun(WeightToAssocMap) ->
 				WeightToAssoc = lists:sort(maps:to_list(WeightToAssocMap)),
 				as_tree(Head, Ops, WeightToAssoc)
 			end, ResWeightToAssoc)

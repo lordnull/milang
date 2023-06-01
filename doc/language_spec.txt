@@ -82,22 +82,56 @@ documentation.
 
 After this, the module _must_ have a module declaration.
 
+*If the file name and module name must be the same, and each file is exactly
+1 module, why bother having a module declaration at all? functions and types
+are exposed via the 'expose' and 'expose all' keywords, so this requirement
+seems silly.
+
+Although there is an edge case: if there is a comment at the start of the file,
+and then an exposed function, is the comment for the module or the function?
+
+So yeah, you **must** have a module declartion so we can have module
+documentation.*.
+
 A module name is any valid milang identifier.
 
 # syntactic parts.
 
 ## local identifier
 
-A series of any non-whitespace characters starting with a non-digit, non-underscore
-excluding the following:
+A series of any non-whitespace characters starting with a non-underscore
+and excluding the following anywhere:
 * single quote '
 * double quote "
 * square brackets []
 * curly brackets {}
 * parenthesis ()
-* double-angle brackets «»
 * dots .
 * commas ,
+
+If the local identifier can be interpreted as an integer literal, it is
+interpreted as such. This means the following will be a compile errors stating
+the name of the binding is invalid.
+
+```milang
+let 5 = "five".
+
+let +5 = "positive_five".
+
+let -5 = "negative_five".
+```
+
+This does allow for the following though:
+
+```milang
+module 3Slot.
+
+data Slots = [
+	, 1stSlot
+	, 2ndSlot
+	, 3rdSlot
+	].
+```
 
 ## remote identifier
 
@@ -106,40 +140,38 @@ another module. See the packages section for module path resolution.
 
 ## ignored identifier
 
-A local identifier preceeded by an underscore (_) will not be bound to a valid.
+A local identifier preceeded by an underscore (_) will not be bound to a value.
 The name is used to help humans understand the code.
 
 ## keywords
 
-The following are keywords. If an identifier and keyword collide, which takes
-precedence depends on context. For example, consider the following code:
+The following are keywords. If an identifier and keyword collide, it is an error.
 
 ```milang
 let let = SomeModule.let 5.
 ```
 
-The first `let` is a keyword, indicating a binding. The second `let` is
-interpreted as a local identifier. The 3rd let is part of a remote identifier,
-and interpreted as the local part of that.
-
-It is generally bad form use identifiers that look the same as keywords, and this
-may be an error in the future.
+Every `let` after the first will cause an error, as a keyword cannot be used as
+a local identifier. Remember, remote identifiers are made up of local
+identifiers.
 
 The keywords are:
 
 * let - bind a name to an expression.
-* spec - stat the expected type of a bound name.
-* expose - expose a spec, type, or class.
-* expose all - when exposing a type, expose the constructors too.
+* spec - state the expected type of a bound name.
+* expose - expose a spec, data type, or class.
+* expose all - when exposing a data type, expose the constructors too.
 * function - an expression that creates a callable function.
 * -> - ends the list of arguments for a function and begins the body.
-* type - define a data structure that can be pattern matched.
+* data - define a data type with a structure that can be pattern matched.
 * class - define a set of functions a type can implement.
 * when - start a list of constraints.
 * match - compare an expression with a set of tests.
 * with - start a set of match tests.
 * teach - implement a class for the given type.
-* . - end a declaration, clause, or certain expressions.
+* , - start a new element in a list or record.
+* ,, - syntactic sugar denoting the list or record to use as a base for updates.
+* . - end a declaration, clause, or expression.
 
 ## comments
 
@@ -156,7 +188,7 @@ For example:
 module list.
 
 {- this documents the list type. -}
-type list a = [
+data list a = [
 	{- this documents the `end` constructor -}
 	, end
 	, cons a (list a)
@@ -177,10 +209,21 @@ let map = function f l ->
 
 ## Spacing
 
-A particular format for spacing is not enforced. Where spaces are is enforced.
+A particular format for spacing is not enforced. Where spaces _are_ is enforced.
 With things like `a+b` being valid identifiers, spaces are required.
 
 Anywhere a space may go, a comment can go as well. A comment counts as a space.
+
+Any character that is considered a space in unicode is allowed as a space. Yes,
+this does mean 0 width spaces count.
+
+Spaces are required:
+
+* before and after infix operations
+* between arguments to a function
+* between arguments to a data type
+* before and after '->'.
+* after a '.' completing an expression if the next character is not another '.'.
 
 ## literals
 
@@ -220,7 +263,6 @@ To show a double quote in the string (\"), preceed it with a slash (\\).
 To show a slash, preceed it with another slash (\\\\).".
 ```
 
-### list
 
 Lists are created using square brackets. Elements in a list are _always_
 preceeded by a comma.
@@ -242,21 +284,28 @@ This is the meat and potatos of the type system. It's based on dialyzer and elm.
 
 {- This creates a constructor with only the name of the type and no value. It's
 essentialy an enum with one value. -}
-type SingleConstructor.
+data SingleConstructor.
 
 {- Similar to the above, but the constructor takes a single argument. There can
 be more. -}
-type SingleArg a.
+data SingleArg a.
 
 {- This creates 2 constructors, one named 'Nothing' and one named 'Some'. The
 former takes 0 args, the lower takes 1. -}
-type Maybe a = [
+data Maybe a = [
 	, Nothing
 	, Some a
 	].
 ```
 
+There is some syntactic sugar to help update, match, and destructure a list. The
+last 2 are explained in the section about matching.
 
+```milang
+{- pre-pending a new element to the top of the list -}
+let do_put element list ->
+	[ element ,, list ].
+```
 
 ### record
 
@@ -270,10 +319,14 @@ let r = {, greeting = "hi", name = "roger" }.
 
 let hello_world = function who ->
 	let baser = r.
+	{- note how when updating a record we're using the same order and syntax
+	as a list. -}
 	let fixedr =
-		{baser |
+		{
 		, greeting = "hello"
-		, name = who }.
+		, name = who ,, baser }.
+	{- syntactic sugar, aka punning. Bind the variables to the fields of the
+	same name. -}
 	let { greeting, name} = fixedr.
 	System.Print.ln (greeting ++ ", " ++ name ++"!").
 
@@ -292,7 +345,7 @@ expose all type list a = [
 expose spec empty = list a.
 let empty = [].
 
-{- we can define a binding using any characters we want. -}
+{- we can define a binding almost using any characters we want. -}
 expose spec :: = a -> list a -> list a.
 let :: = function newHead list ->
 	cons newHead list.
@@ -305,7 +358,7 @@ let foldl = function foldFunc acc list ->
 		nil ->
 			acc.
 		cons e tail ->
-			foldl foldFunc (foldFunc acc) tail.
+			foldl foldFunc (foldFunc e acc) tail.
 	. {- this period is to close up the match expression. -}
 	. {- this period is to close up the function expression. -}
 
@@ -326,7 +379,7 @@ let map = function mapper l ->
 		(mapper e) ':: acc.
 	{- here we're using the pipe function to take the result of the fold and
 	send it to the reverse function. -}
-	foldl foldFun [] l '| reverse.
+	foldl foldFun [] l '|> reverse.
 
 {- we don't need to spec a binding if we don't plan to expose it. However, the
 _only_ way to expose a binding is to spec it. -}
@@ -440,7 +493,7 @@ let dumb_count = function list ->
 let zip = function list1 list2 ->
 	zip_acc [] list1 list2.
 
-{- this demonstrations not just nested matching, but how a function bound to a
+{- this demonstrates not just nested matching, but how a function bound to a
 name can call itself, no extra syntax needed. -}
 let zip_acc = function acc list1 list2 ->
 	match tuple list1 list2 with
@@ -464,6 +517,7 @@ let get_name = function t ->
 	name.
 
 let new_t = T.
+{- Now calling new_t is the same just calling 'T'. -}
 
 {- there's nothing that says a top level bind has to be a function. It's of
 limited use, though. Eseentially it's only able to match a literal or fully
@@ -585,54 +639,594 @@ teach Integer class Numerical ->
 	.
 ```
 
-That's all well and good, but now we need a way to reference and _use_ those.
-My first thought is introducing an "import class" style line, but that seems
-clunky. Using "let == = Core.==." could work, but there's no actualy "Core.=="
-that exists, and it just seems confusing when there's no actualy function.
-Having Classes be magically exported when importing a module when everything else
-needs to aliased or bound goes against the idea of be explicit. So, that leads me
-back to some syntax that explicitly says "use this class in this module as though
-it were local.", but also allowing for infix notation to use class definitions
-remotely.
 
-```milang-wip
 
-import Core.
+# Erlang interop
 
-let add = function a b ->
-	{- I need some way to denote in headers that this is a class function without
-	needing to mutilate the class function names. -}
-	a 'Core.+ b..
+While milang itself is a language with certain run-time requirements, for ease
+of implementation and proof of concept, Erlang is the first target. Rather than
+target the beam directly, I'm targeting the erlang language at version 25.
 
-{- so introduce a new keyword? -}
-learn Core.Number.
-{- or maybe just re-use an old one? -}
-{- so far this is my front runner. With the ide being _right there_ (and even
-other ide's building symbol tables), finding out that "Core.Number" is a class
-and not a module is easy. Unless there is a module calls "Core.Number", in
-which case, this becomes ambiguous. -}
-import Core.Number.
-{- combine some? This is basically removing the ambiguity from the above, which
-I think makes it the _true_ front runner. -}
-import class Core.Number
-alias class Core.Number {- ugh, really don't like that one. -}
+This does mean some finagling to get it to work. There are some fundamental
+differences in how the languages work.
 
-    spec Core.== when [ , a Equality ] = a -> a -> Core.Boolean.
+    milang                           | erlang
+    ---------------------------------+----------------------------------
+    lazy                             | eager
+    auto-curry                       | no-curry
+    top level bind                   | only functions at module level
+    unified function syntax          | fun vs top module level function.
+    Default constructor functions    | no constructor functions
+    primarily static typing          | opt-in structural typing
 
-We can then do our usual let to bind:
+Some of those are done during the compile phase just due to the nature of milang.
+For example, the static typing is done during compile, so we don't do any type-
+checking during run-time.
 
-    let == = Core.==.
+However, we need to de-lazy functions when needed, deal w/ the non-curry status
+of erlang, create constructor functions, and so on.
 
-And boom. So, with a bit of compiler magic on the header, we don't need to
-introduce any new syntax or ambibuity.
+Furthermore, erlang files are rather strict on when a function is declared as
+exported, so we need to handle that.
+
+The final wrinkle is wanting to be able to call milang from erlang. By targeting
+erlang modules in a 1:1 with milang modules, this is feasible. Essentially we'll
+be doing what elixir does and just saying "here's how our module names get mapped
+to erlang module names".
+
+## Partial Application and Curry
+
+Much of the heavy lifting will be done using the funcerl library. That provides
+functions to turn a fun into a lazy fun, as well as provides a means to partially
+apply a fun(ction).
+
+Given a milang module as below, I've hand-written _might_ work as the resulting
+erlang code. The erlang code has been annotated and formatted for human
+readabiity. The actual code produced is unlikely to be legible.
+
+```milang
+module do_things.
+
+expose spec do_a_thing = T -> T -> T.
+let do_a_thing = function a b ->
+	Other:do a b.
+
+expose spec do_a_sub_thing = A -> B -> C -> D
+let do_a_sub_thing = function a ->
+	function b c ->
+		Other:did a b c
+	.
+
+expose spec many_a_thing = A -> B.
+let many_a_thing = function a ->
+	might-work a
+	'|> Result:map (do_a_thing "yup") r1
+	'|> Result:with_default "defaulted".
 ```
 
+```erlang
+-module('do_things').
+
+%% Exporting the functions with full arity as defined by the function
+%% bodies, not the function spec's.
+-export([do_a_thing/2, do_a_sub_thing/1, many_a_thing/1]).
+
+%% One of the simplest transforms, a function that calls another function.
+%% To reduce branching, we're always going to do a partial:call/2.
+'do_a_thing'(Arg_a, Arg_b) ->
+	partial:call([Arg_a, Arg_b], fun 'Other':'do'/2).
+
+%% Becuase partial:call/2 keeps calling returned functions as long as there are
+%% terms, we can essentially nest partials this way, thus creating closures.
+'do_a_sub_thing'(Arg_a) ->
+	partial:call([], fun(Arg_b, Arg_c) ->
+		partial:call([Arg_a, Arg_b, Arg_c], fun 'Other':'did'/3)
+	end).
+
+%% partials all the way down.
+%% But also note that string literals are transformed into binary strings.
+%% More precisely they are to be treated as unicode:chardata().
+'many_a_thing'(Arg_a) ->
+	partial:call([
+		partial:call([
+			partial:call([Arg_a], fun 'might-work'/1),
+			partial:call([partial:call([<<"yup">>], fun 'do_a_thing'/2)], 'Result':'map'/2)
+		], fun 'Core':'|>'/2),
+		partial:call([<<"defaulted">>], fun 'Result':'with_default'/2)
+	], fun 'Core':'|>'/2).
+```
+
+## Data types and constructors
+
+Erlang has records, tuples, lists, and maps. There is syntax to create them.
+However, there's no "constructors" for any of them really. A constructor being
+a function that takes the needed arguments for a type and returns that type.
+For an example of what I mean, check out the 'maybe' module in funcerl. There's
+the top 'maybe/1' type, which defines '{some, T}' and 'undefined', but I had to
+explicitly write a 'some/1' and 'nothing' function. Milang does this for you.
+
+This only matters if a type is "expose all". If the type does not do that,
+then the constructor functions are still created, but they are not in the
+exported functions list.
+
+```milang
+module data_things.
+
+expose all Mayhaps a = [
+	, Yarp a
+	, Narp
+	].
+
+expose spec map = (a -> b) -> Mayhaps a -> Mayhaps b.
+let map = function mapper mayhaps ->
+	match mayhaps with
+		Yarp a ->
+			Yarp (mapper a).
+		Narp ->
+			Narp.
+	.
+	.
+```
+
+```erlang
+-module('data_things').
+
+%% expose the created constructors.
+-expose(['Yarp'/1, 'Narp'/0, 'map'/2]).
+
+%% The milang constructor took 1 argument, so does the erlang constructor.
+'Yarp'(Arg_a) ->
+	{'data_things.Yarp', Arg_a}.
+
+'Narp'() ->
+	'data_things.Narp'.
+
+%% An example of how a simple match would map to an erlang case. Because
+%% constructors are just functions, we're using partial again.
+'map'(Arg_mapper, Arg_mayhaps) ->
+	case Arg_mayhaps of
+		{'data_things.Yarp', Arg_a}} ->
+			partial:call([partial:call([Arg_a], Arg_mapper)], fun 'Yarp'/1);
+		'data_things.Narp' ->
+			partial:call([], fun 'Narp'/0)
+	end.
+```
+
+## Data boxing and unboxing
+
+In the data types and constructors section, I used basic tuples to represent the
+milang types. There are several primitive types that erlang supports that I will
+do translations for.
+
+### Numbers
+
+Numbers will be given to and from erlang unchanged. The type system will check
+for integer vs floating.
+
+### Lists
+
+Raw lists will be used as-is. Wrapping a listin something else will likely explode
+memory usage.
+
+### Records
+
+Milang has no tuples, only records. A record is a arbitrary mapping of names to
+values. They do not need to be declared before being used, just like tuples.
+This means they will map nicely to erlang maps.
+
+Note that records are the only sturctural type in milang.
+
+```milang
+module Tuple.
+
+expose alias Tuple a b = {,first = a, second = b}.
+
+expose spec 2pull = a -> b -> Tuple a b.
+let 2pull = function a b ->
+	{, first = a, second = b}.
+
+expose spec first = Tuple a any -> a
+let first = function {,first a} ->
+	a.
+
+expose spec second = Tuple any a -> a.
+let second = function {,second = a} ->
+	a.
+
+expose spec fallback = Tuple (Maybe a) a -> a.
+let fallback = function t ->
+	match t with
+		{,first = Nothing } ->
+			second t.
+		{,first = Some v} ->
+			v.
+	.
+	.
+```
+
+```erlang
+-module('Tuple').
+
+-export(['Tuple'/2, '2pull'/2, 'first'/1, 'second'/1, 'fallback'/1]).
+
+%% The alias defines a constructor for a tuple, so we do need to create one.
+'Tuple'(Arg_a, Arg_b) ->
+	#{ 'first' => Arg_a, 'second' => Arg_b }.
+
+%% we're doing a record literal, so we do a map literal. The type checker will
+%% ensure the structure is correct.
+'2pull'(Arg_a, Arg_b) ->
+	#{ 'first' => Arg_a, 'second' => Arg_b }.
+
+%% We're doing a pattern match in the function head, so we'll do our best to
+%% keep that.
+'first'(#{ 'first' := Arg_a}) ->
+	Arg_a.
+
+'second'(#{ 'second' := Arg_a }) ->
+	Arg_a.
+
+'fallback'(Arg_t) ->
+	case Arg_t of
+		#{ 'first' := 'Maybe.Maybe.Nothing' } ->
+			partial:call([Arg_t], fun 'second'/1);
+		#{ 'first' := {'Maybe.Maybe.Some', Arg_v}} ->
+			Arg_v
+	end.
+
+```
+
+### strings
+
+Milang has all double-quoted data as utf8 encoded string literals, and will be
+converted to a binary string. Appending and prepending to strings will be done
+in an iolist way, however. So things will be treated as unicode:chardata/0 and
+not translated.
+
+## Classes and teaching
+
+Erlang has behaviors, but those are at a module level. Milang (taking inspiration
+from Haskell) has classes, which are at a data type level. This means there needs
+to be a way for milang to register (and use) the correct function for the correct
+data types.
+
+```milang
+module Comparision.
+
+explose class Equality a =
+	spec == = a -> a -> Boolean.
+	spec <> = a -> a -> Boolean.
+	let == = function a b ->
+		not ( a '<> b ).
+	let <> = function a b ->
+		not ( a '== b ).
+	.
+
+expose data Order = [
+	, LessThan
+	, GreaterThan
+	, EqualTo
+	].
+
+class Sortable a when [
+	, a Equality
+	] =
+	spec compare = a -> a -> Order.
+	spec > = a -> a -> Boolean.
+	spec >= = a -> a -> Boolean.
+	spec < = a -> a -> Boolean.
+	spec <= = a -> a -> Boolean.
+	let > = function a b ->
+		match compare a b with
+			GreaterThan ->
+				True.
+			_ ->
+				False.
+		..
+	let '>=' = function a b ->
+		match compare a b with
+			GreaterThan ->
+				True.
+			EqualTo ->
+				True.
+			_ ->
+				False.
+		..
+	let '<' = function a b ->
+		match compare a b with
+			LessThan ->
+				True.
+			_ ->
+				False.
+		..
+	let '<=' = function a b ->
+		match compare a b with
+			LessThan ->
+				True.
+			EqualTo ->
+				True.
+			_ ->
+				False.
+		..
+	.
+```
+
+```milang
+module 3Slot.
+
+expose all data Slot = [
+	, Slot1
+	, Slot2
+	, Slot3
+	].
+
+teach Slot class Equality ->
+	let == = function a b ->
+		match Tuple a b with ->
+			{, first = Slot1, second = Slot1 } ->
+				True.
+			{, first = Slot2, second = Slot2 } ->
+				True.
+			{, first = Slot3, second = Slot3 } ->
+				True.
+			_ ->
+				False.
+		.
+	.
+
+teach Slot class Sortable ->
+	let compare = function a b ->
+		match a == b with
+			True ->
+				Comparison.EqualTo.
+			False ->
+				match Tuple a b with
+					{, first = Slot1 } ->
+						Comparison.LessThan.
+					{, first = Slot3 } ->
+						Comparison.GreaterThan.
+					{, first = Slot2, second = Slot1 } ->
+						Comparison.GreaterThan.
+					_ ->
+						Comparison.LessThan.
+				.
+				.
+		.
+	.
+```
+
+```milang
+module bad_sort.
+
+expose spec comparison_sort = List a -> List a when [,a Comparison.Sortable].
+let comparison_sort = function l ->
+	match l with
+		[] ->
+			l.
+		[_] ->
+			l.
+		[a | tail] ->
+			{, less_than = lt, greater_or_equal = gte } = List.comparison_split(tail, a),
+			List.concats([comparision_sort(lt), [a], comparison_sort(gte)).
+		.
+	.
+
+expose spec comparision_split = List a -> a -> {, less_than = List a, greate_or_equal = List a }.
+let comparison_split = function l a ->
+	List.foldl (slot a) {,less_than = [], greater_or_equal = []} l.
+
+let slot = function derterminator element acc ->
+	let {, less_than = lt_o, greater_or_equal = gte_o} = acc.
+	match determinator < element with
+		True ->
+			{, less_than = [ element : lt_o ] : acc }.
+		False ->
+			{, greater_or_euqal = [ element : gte_o ] : acc }.
+	.
+	.
+```
+
+Okay, that's a lot of milang code. Well, let's get to it.
+
+```erlang
+-module('Comparison').
+
+% we'll use the behavior functionality. It's likely the easiest way to do this.
+-callback 'Comparison.Equality.=='(Arg_a, Arg_a) -> 'Core':'Boolean'().
+-callback 'Comparison.Equality.<>'(Arg_a, Arg_a) -> 'Core':'Boolean'().
+% and because they are optional (eg, there is a default behavior implemented),
+% we'll say they are optional. It is up to the milang compiler to ensure at least
+% one of them is defined.
+-optional_callbacks(['Comparison.Equality.=='/2, 'Comparison.Equality.<>'/2])
+% and because we can define more than 1 class in a module, all callbacks become
+% optional.
+-callback 'Comparison.Sortable.compare'(Arg_a, Arg_a) -> 'Core':'Boolean'().
+-callback 'Comparison.Sortable.>'(Arg_a, Arg_a) -> 'Core':'Boolean'().
+-callback 'Comparison.Sortable.>='(Arg_a, Arg_a) -> 'Core':'Boolean'().
+-callback 'Comparison.Sortable.<'(Arg_a, Arg_a) -> 'Core':'Boolean'().
+-callback 'Comparison.Sortable.<='(Arg_a, Arg_a) -> 'Core':'Boolean'().
+-optional_callbacks(
+	['Comparison.Sortable.compare'/2
+	,'Comparison.Sortable.>'/2
+	,'Comparison.Sortable.>='/2
+	,'Comparison.Sortable.<'/2
+	,'Comparison.Sortable.<='/2
+	]).
+
+% the exported here takes 3 because we need the callback module for the
+% supporting function.
+-export(['Equality.=='/3, 'Equality.<>'/3]).
+-export(['LessThan'/0,'GreaterThan'/0,'EqualTo'/0]).
+% There is no sortable.compare because there is no default function implementation
+% for it.
+-export(['Sortable.>'/3, 'Sortable.>='/3, 'Sortable.<'/3, 'Sortable.<='/3]).
+
+'Equality.=='(A, B, Module) ->
+	not (partial:call([A, B], fun Module:'Comparison.Equality.<>'/2)).
+
+'Equality.<>'(A, B, Module) ->
+	not (partial:call([A, B], fun Module:'Comparison.Equality.=='/2)).
+
+''
+
+'LessThan'() ->
+	'LessThan'.
+
+'GreaterThan' ->
+	'GreaterThan'.
+
+'EqualTo' ->
+	'EqualTo'.
+
+'Sortable.>'(A, B, Module) ->
+	case partial:call([A, B], fun Module:'Comparison.Sortable.compare'/2) of
+		'EqualTo' ->
+			'false';
+		'LessThan' ->
+			'false';
+		'GreaterThan' ->
+			'true'
+	end.
+
+'Sortable.>='(A, B, Module) ->
+	case partial:call([A, B], fun Module:'Comparison.Sortable.compare'/2) of
+		'EqualTo' ->
+			'true';
+		'LessThan' ->
+			'false';
+		'GreaterThan' ->
+			'true'
+	end.
+
+'Sortable.<'(A, B, Module) ->
+	case partial:call([A, B], fun Module:'Comparison.Sortable.compare'/2) of
+		'EqualTo' ->
+			'false';
+		'LessThan' ->
+			'true';
+		'GreaterThan' ->
+			'false'
+	end.
+
+'Sortable.<='(A, B, Module) ->
+	case partial:call([A, B], fun Module:'Comparison.Sortable.compare'/2) of
+		'EqualTo' ->
+			'true';
+		'LessThan' ->
+			'true';
+		'GreaterThan' ->
+			'true'
+	end.
+```
+
+Phew! Okay, so that's how an erlang module derived from a milang module defining
+2 classes look. Let's put it into some practice. The milang module 3Slot implements
+the classes, so let's see what that looks like.
+
+```erlang
+-module('3Slot').
+
+-export(['Slot1'/0, 'Slot2'/0, 'Slot3'/0]).
+-export(['Comparison.Equality.=='/2,'Comparison.Equality.<>'/2]).
+-export(
+	['Comparison.Sortable.compare'/2
+	,'Comparison.Sortable.<'/2
+	,'Comparison.Sortable.<='/2
+	,'Comparison.Sortable.>'/2
+	,'Comparison.Sortable.>='/2
+	]).
 
 
+'Slot1'() ->
+	'3Slot.Slot1'.
+
+'Slot2'() ->
+	'3Slot.Slot2'.
+
+'Slot3'() ->
+	'3Slot.Slot3'.
 
 
+'Comparison.Equality.=='(Arg_a, Arg_b) ->
+	case patial:call([Arg_a, Arg_b], fun 'Tuple.Tuple'/2) of
+		#{ 'first' := '3Slot.Slot1', second := '3Slot.Slot1' } -> 'true';
+		#{ 'first' := '3Slot.Slot2', second := '3Slot.Slot2' } -> 'true';
+		#{ 'first' := '3Slot.Slot3', second := '3Slot.Slot3' } -> 'true';
+		_ -> 'false'
+	end.
 
+%% to make things work properly (I think) we need to still define the callback
+%% here. It's just going to point to the default, though.
+'Comparison.Equality.<>'(Arg1, Arg2) ->
+	partial:call([Arg1, Arg2, ?MODULE], fun 'Comparison.Equality.=='/3).
 
+'Comparison.Sortable.compare'(Arg_a, Arg_b) ->
+	case partial:call([Arg_a, Arg_b], fun 'Comparison.Equality.=='/2) of
+		'true' ->
+			partial:call([], fun 'Comparison':'EqualTo'/0);
+		'false' _>
+			case partial:call([Arg_a, Arb_b], 'Tuple':'Tuple'/2) of
+				#{ first := '3Slot.Slot1' } ->
+					partial:call([], fun 'Comparison':'LessThan'/0);
+				#{ first := '3Slot.Slot3' } ->
+					partial:call([], fun 'Comparison':'GreaterThan'/0);
+				#{ first := '3Slot.Slot2', 'second' := '3Slot.Slot1'} ->
+					partial:call([], fun 'Comparison':'GreaterThan'/0);
+				_ ->
+					partial:call([], fun 'Comparison':'LessThan'/0)
+			end
+	end.
 
+%% and we need to define all the others to point to the default implementation.
+'Comparison.Sortable.<'(A1, A2) ->
+	partial:call([A1, A2, ?MODULE], fun 'Comparison':'Sortable.<'/3).
 
+'Comparison.Sortable.<='(A1, A2) ->
+	partial:call([A1, A2, ?MODULE], fun 'Comparison':'Sortable.<='/3).
 
+'Comparison.Sortable.>'(A1, A2) ->
+	partial:call([A1, A2, ?MODULE], fun 'Comparison':'Sortable.>'/3).
+
+'Comparison.Sortable.>'(A1, A2) ->
+	partial:call([A1, A2, ?MODULE], fun 'Comparison':'Sortable.>='/3).
+
+```
+
+Okay, so that's what it looks like to implement the thing. Now, let's see what
+a 3rd party module will do with it.
+
+```erlang
+-module('bad_sort').
+
+-export(['comparison_sort'/1, 'comparison_split'/2]).
+
+comparison_sort(Arg_l) ->
+	case Arg_l of
+		[] ->
+			Arg_l;
+		[_] ->
+			Arg_l;
+		[Arg_a | Arg_tail] ->
+			#{ 'less_than' := Arg_lt, 'greater_or_equal' := Arg_gte } = partial:call([Arg_tail, Arg_a], fun 'comparison_split/2'),
+			partial:call([[partial:call([Arg_lt], fun 'comparison_sort'/1), [Arg_a], partial:call([Arg_gte], fun 'comparison_sort'/1)]], fun 'List':'concats'/1)
+	end.
+
+comparison_split(Arg_l, Arg_a) ->
+	partial:call([partial:call([Arg_a], fun 'slot'/3), #{ 'less_than' => [], 'greater_or_equal' => []}, Arg_l], fun 'List':foldl/3).
+
+slot(Arg_determinator, Arg_element, Arg_acc) ->
+	#{ less_than := Arg_lt_o, greater_or_equal := Arg_gte_o } = Arg_acc,
+	% here's the rub.
+	% I need a way to determine which module actually implements the
+	% '<' function, while also preserving the fact that numbers (and a few other)
+	% erlang types are done "in the raw" so to speak. Considering the module that
+	% implements the class doesn't need to be the module that implemented the
+	% data type, likely the best way to do it is a run-time dispatch in a lookup
+	% table.
+	case milang:class_dispatch('Comparision.Sortable.<', [milang:type_of(Arg_determinator), milang:type_of(Arg_element)]) of
+		'true' ->
+			Arg_acc#{ 'less_than' => [ Arg_element | Arg_lt_o]};
+		'false' ->
+			Arg_acc#{ 'greater_or_equal => [ Arg_element | Arg_gte_o]'}
+	end.
+```

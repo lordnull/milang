@@ -45,7 +45,7 @@
 default_imports() -> unicode:characters_to_binary(?DEFAULT_IMPORTS).
 
 always_import_ast() ->
-	{ok, Tokens, <<>>} = parse:it(default_imports(), milang_p_token:tokens()),
+	{ok, Tokens, <<>>} = parse:string(default_imports(), milang_p_token:tokens()),
 	{ok, AST} = milang_lex:as_header(Tokens),
 	?LOG_DEBUG("always import ast: ~p", [AST]),
 	AST.
@@ -318,11 +318,11 @@ import_module(Node, State) ->
 	NameComplex = milang_ast:data(NameNode),
 	Module = milang_ast_identifier:as_module_name(NameComplex),
 	MaybeFoundHeader = find_module(Module, State#compile_state.work_dir, State#compile_state.search_dirs),
-	ContentsRes = 'Result':and_then(fun(File) ->
+	ContentsRes = result:and_then(fun(File) ->
 		file:read_file(File)
 	end, MaybeFoundHeader),
-	TokensRes = 'Result':and_then(fun(Binary) ->
-		case parse:it(Binary, milang_p_token:tokens()) of
+	TokensRes = result:and_then(fun(Binary) ->
+		case parse:string(Binary, milang_p_token:tokens()) of
 			{ok, Tokens, <<>>} ->
 				{ok, Tokens};
 			{ok, _, LeftOvers} ->
@@ -331,7 +331,7 @@ import_module(Node, State) ->
 				Error
 		end
 	end, ContentsRes),
-	'Result':and_then(fun(Tokens) ->
+	result:and_then(fun(Tokens) ->
 		milang_lex:as_header(Tokens)
 	end, TokensRes).
 

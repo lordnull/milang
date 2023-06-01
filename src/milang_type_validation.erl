@@ -147,7 +147,7 @@ new() ->
 -spec validate_list([ milang_ast:ast_node() ], lookup_table()) -> {ok, lookup_table()} | {error, term()}.
 validate_list(Nodes, Table) ->
 	FoldFun = fun validate_node/2,
-	'Result':foldl(FoldFun, Table, Nodes).
+	result:foldl(FoldFun, Table, Nodes).
 
 -spec validate_node(milang_ast:ast_node(), lookup_table()) -> {ok, lookup_table()} | {error, term()}.
 validate_node(Node, Table) ->
@@ -198,17 +198,17 @@ validate_node(type, Node, Table) ->
 		ConstructorNameNode = milang_ast_constructor:name(milang_ast:data(ConstructorNode)),
 		ConstructorArgsNodes = milang_ast_constructor:args(milang_ast:data(ConstructorNode)),
 		{identifier_type, ConstructorName} = milang_ast:data(ConstructorNameNode),
-		ConstructorArgsResult = 'Result':map_list(fun(N) ->
+		ConstructorArgsResult = result:map_list(fun(N) ->
 			type_of_node(N, TableAcc)
 		end, ConstructorArgsNodes),
 		?LOG_DEBUG("Constructor arg result: ~p", [ConstructorArgsResult]),
-		'Result':map(fun(TypedArgs) ->
+		result:map(fun(TypedArgs) ->
 			Entry = #tv_constructor{ constructor_of = Name, args = TypedArgs},
 			set_entry(ConstructorName, Entry, TableAcc)
 		end, ConstructorArgsResult)
 	end,
 	?LOG_DEBUG("So the constructors I got: ~p", [Constructors]),
-	Out = 'Result':foldl(ConstructorFoldFun, MidTable, Constructors),
+	Out = result:foldl(ConstructorFoldFun, MidTable, Constructors),
 	?LOG_DEBUG("validated a declaration_type: ~p~n"
 		"    Out: ~p"
 		, [Node, case Out of {ok, _} -> ok; _ -> Out end]),
@@ -222,14 +222,14 @@ validate_node(alias, Node, Table) ->
 	Args = [{placeholder, identifier(N)} || N <- ArgNodes],
 	OriginalNode = milang_ast_alias:original(Data),
 	TypeRes = type_of_node(OriginalNode, Table),
-	TableWithAliasRes = 'Result':and_then(fun(Original) ->
+	TableWithAliasRes = result:and_then(fun(Original) ->
 		?LOG_DEBUG("the original: ~p", [Original]),
 		Alias = #tv_alias{ arg_names = Args, constraints = Constraints, truename = Original },
 		add_entry(identifier(NameNode), Alias, Table)
 	end, TypeRes),
 	% if we're aliasing a data type (like Maybe a), it's useful / needed to
 	% localize the constructors as well ( if they have been exposed ).
-	ConstructorsRes = 'Result':map_n([TypeRes, TableWithAliasRes], fun(OriginalType, TableWithAlias) ->
+	ConstructorsRes = result:map_n([TypeRes, TableWithAliasRes], fun(OriginalType, TableWithAlias) ->
 		case OriginalType of
 			#tv_concrete{ concrete_of = DataTypeName } ->
 				get_constructors_for(DataTypeName, TableWithAlias);
@@ -237,7 +237,7 @@ validate_node(alias, Node, Table) ->
 				[]
 		end
 	end),
-	'Result':and_then(fun(Constructors) ->
+	result:and_then(fun(Constructors) ->
 		lists:foldl(fun
 			({#{local := LocalName}, Constructor}, {ok, T}) ->
 				add_entry(LocalName, Constructor, T);
@@ -304,7 +304,7 @@ validate_spec(Data, Table) ->
 	?LOG_DEBUG("Spec: ~p", [Spec]),
 	ResultSpecType = type_of_node(Spec, Table),
 	?LOG_DEBUG("ResultSpecType: ~p", [ResultSpecType]),
-	ResultAddEntry = 'Result':and_then(fun(Type) ->
+	ResultAddEntry = result:and_then(fun(Type) ->
 		add_entry(identifier(Name), Type, Table)
 	end, ResultSpecType),
 	Out = ResultAddEntry,
@@ -323,7 +323,7 @@ validate_teach(Data, Table) ->
 		_ ->
 			{error, {invalid_student_name, StudentNode}}
 	end,
-	StudentTypeRes = 'Result':and_then(fun(Name) ->
+	StudentTypeRes = result:and_then(fun(Name) ->
 		case lookup(Name, Table) of
 			{ok, #tv_data{}} = Ok ->
 				Ok;
@@ -339,14 +339,14 @@ validate_teach(Data, Table) ->
 		_ ->
 			{error, {invalid_class_name, ClassNode}}
 	end,
-	ClassTypeRes = 'Result':and_then(fun(Name) ->
+	ClassTypeRes = result:and_then(fun(Name) ->
 		case lookup(Name, Table) of
 			{ok, #tv_class{}} = Ok -> Ok;
 			{ok, Wut} -> {error, {not_a_class, Name, Wut}};
 			Else -> Else
 		end
 	end, ClassNameRes),
-	AddClassToStudentTypeRes = 'Result':and_then_n([StudentNameRes, StudentTypeRes, ClassNameRes, ClassTypeRes], fun(StudentName, StudentType, ClassName, ClassType) ->
+	AddClassToStudentTypeRes = result:and_then_n([StudentNameRes, StudentTypeRes, ClassNameRes, ClassTypeRes], fun(StudentName, StudentType, ClassName, ClassType) ->
 		#tv_data{ classes_learned = Learned } = StudentType,
 		#tv_class{ prereq_classes = Prereqs } = ClassType,
 		case ordsets:is_subset(Prereqs, Learned) of
@@ -373,7 +373,7 @@ validate_teach(Data, Table) ->
 		%Expression = milang_ast:data(ExpressionNode),
 		Acc#{ Match => ExpressionNode }
 	end, #{}, Bindings),
-	FinalRes = 'Result':and_then_n([StudentNameRes, StudentTypeRes, ClassNameRes, ClassTypeRes, AddClassToStudentTypeRes],
+	FinalRes = result:and_then_n([StudentNameRes, StudentTypeRes, ClassNameRes, ClassTypeRes, AddClassToStudentTypeRes],
 		fun(StudentName, _StudentType, ClassName, ClassType, TableWithLearnedStudent) ->
 			Defaults = ClassType#tv_class.default_implementations,
 			Specs = ClassType#tv_class.member_specs,
@@ -407,12 +407,12 @@ validate_teach(Data, Table) ->
 							, [Defaults, BindingsAsMap, TableWithLearnedStudent]),
 						{error, {no_implementation_nor_default, SpecName, ClassName, StudentName}}
 				end,
-				ImplementationTypeRes = 'Result':and_then_n([ImplementationRes, TableRes], fun(Implementation, InTable) ->
+				ImplementationTypeRes = result:and_then_n([ImplementationRes, TableRes], fun(Implementation, InTable) ->
 					type_of_node(Implementation, InTable)
 				end),
 				TranslatedSpec = update_type_variable({placeholder, TypePlaceholder}, #tv_concrete{ concrete_of = StudentName }, Spec),
 				?LOG_DEBUG("Spec translation done.~n    Original: ~p~n    New: ~p", [Spec, TranslatedSpec]),
-				'Result':and_then_n([ImplementationTypeRes, TableRes], fun(Implementation, TableAcc) ->
+				result:and_then_n([ImplementationTypeRes, TableRes], fun(Implementation, TableAcc) ->
 					validate_binding({class_taught, StudentName, ClassName, SpecName}, {ok, Implementation}, {ok, TranslatedSpec}, TableAcc)
 				end)
 			end, {ok, TableWithLearnedStudent}, SpecList)
@@ -465,7 +465,7 @@ validate_class(Data, Table) ->
 	},
 	case add_entry(Name, TvClass, Table) of
 		{ok, TableWithClass} ->
-			'Result':foldl(fun({SpecName, Spec}, SpecTable) ->
+			result:foldl(fun({SpecName, Spec}, SpecTable) ->
 				add_entry(SpecName, Spec#tv_function{ constraints = #{ TypeVariable => Name} }, SpecTable)
 			end, TableWithClass, SpecsAsList);
 		Error ->
@@ -568,10 +568,10 @@ type_of_node(Node, Table) ->
 type_of_node(signature, Node, Table) ->
 	%?LOG_DEBUG("type of node:~n    Node: ~p", [Node]),
 	ArgNodes = milang_ast_signature:args(milang_ast:data(Node)),
-	ResultArgTypes = 'Result':map_list(fun(N) ->
+	ResultArgTypes = result:map_list(fun(N) ->
 		type_of_node(N, Table)
 	end, ArgNodes),
-	'Result':map(fun(ArgTypes) -> #tv_function{ args = ArgTypes } end, ResultArgTypes);
+	result:map(fun(ArgTypes) -> #tv_function{ args = ArgTypes } end, ResultArgTypes);
 
 type_of_node(concrete, Node, Table) ->
 	%?LOG_DEBUG("type of node:~n    Node: ~p~n", [Node]),
@@ -579,7 +579,7 @@ type_of_node(concrete, Node, Table) ->
 	NameNode = milang_ast_concrete:name(Data),
 	Name = identifier(NameNode),
 	Args = milang_ast_concrete:args(Data),
-	ResultArgTypes = 'Result':map_list(fun(N) ->
+	ResultArgTypes = result:map_list(fun(N) ->
 		type_of_node(N, Table)
 	end, Args),
 	% a concrete can be for either an alias or a data (type). To make type checks
@@ -588,7 +588,7 @@ type_of_node(concrete, Node, Table) ->
 	% a rough-cut of it. Its up to the validator or type check part to actually
 	% figure out the type proper.
 	ResultLookup = lookup(Name, Table),
-	'Result':and_then_n([ResultArgTypes, ResultLookup], fun(ArgTypes, Resolved) ->
+	result:and_then_n([ResultArgTypes, ResultLookup], fun(ArgTypes, Resolved) ->
 		case Resolved of
 			#tv_alias{} ->
 				{ok, alias_as_concrete(Resolved, ArgTypes)};
@@ -661,15 +661,15 @@ type_of_node(call, Node, Table) ->
 			JustCallName
 	end,
 	?LOG_DEBUG("Function name: ~p; args: ~p", [Name, Args]),
-	ResultArgTypes = 'Result':map_list(fun(N) ->
+	ResultArgTypes = result:map_list(fun(N) ->
 		?LOG_DEBUG("expression call arg type: ~p", [N]),
 		type_of_node(N, Table)
 	end, Args),
-	ResultLong = 'Result':map(fun(ArgTypes) ->
+	ResultLong = result:map(fun(ArgTypes) ->
 		#tv_function{ args = ArgTypes }
 	end, ResultArgTypes),
 	ResultExistingAtAll = lookup(Name, Table),
-	ResultExisting = 'Result':and_then(fun
+	ResultExisting = result:and_then(fun
 		(#tv_function{} = A) ->
 			{ok, A};
 		({placeholder, _A}) ->
@@ -724,10 +724,10 @@ type_of_node(call, Node, Table) ->
 		(Actual) ->
 			{error, {not_a_function, Name, Actual}}
 	end, ResultExistingAtAll),
-	ResultTypeCheck = 'Result':and_then_n([ResultExisting, ResultLong], fun(Known, Inferred) ->
+	ResultTypeCheck = result:and_then_n([ResultExisting, ResultLong], fun(Known, Inferred) ->
 		check_type_match(Known, Inferred, Table)
 	end),
-	ResultChoppedArgs = 'Result':and_then_n([ResultTypeCheck, ResultExisting, ResultLong], fun(TypeCheck, Known, Inferred) ->
+	ResultChoppedArgs = result:and_then_n([ResultTypeCheck, ResultExisting, ResultLong], fun(TypeCheck, Known, Inferred) ->
 		InferredArgs = Inferred#tv_function.args,
 		KnownArgs = Known#tv_function.args,
 		if
@@ -743,7 +743,7 @@ type_of_node(call, Node, Table) ->
 				{ok, Inferred#tv_function{ args = NewArgs }}
 		end
 	end),
-	'Result':map(fun(MinimalFunction) ->
+	result:map(fun(MinimalFunction) ->
 		case MinimalFunction#tv_function.args of
 			[Singleton] ->
 				Singleton;
@@ -803,10 +803,10 @@ type_of_node(function, Node, BaseTable) ->
 	% TODO get arg -> type mapping, and then load that into the type table.
 	ArgNodes = milang_ast_function:args(Data),
 	ReversedArgsListAndTableRes = lists:foldl(fun(ArgNode, Acc) ->
-		TypeRes = 'Result':and_then(fun({_, TableAcc}) ->
+		TypeRes = result:and_then(fun({_, TableAcc}) ->
 			type_of_node(ArgNode, TableAcc)
 		end, Acc),
-		'Result':and_then_n([Acc, TypeRes], fun({ArgTypes, TableAcc}, T) ->
+		result:and_then_n([Acc, TypeRes], fun({ArgTypes, TableAcc}, T) ->
 			{ok, {[{ArgNode, T} | ArgTypes], TableAcc}}
 		end)
 	end, {ok, {[], Table}}, ArgNodes),
@@ -816,19 +816,19 @@ type_of_node(function, Node, BaseTable) ->
 		_ ->
 			{ReversedArgsListAndTableRes, ReversedArgsListAndTableRes}
 	end,
-	MaybeArgsList = 'Result':map(fun lists:reverse/1, ReversedArgsListRes),
+	MaybeArgsList = result:map(fun lists:reverse/1, ReversedArgsListRes),
 	AddNode = fun(ArgNode, Type, OldTable) ->
 		Id = identifier(ArgNode),
 		add_entry(Id, Type, OldTable)
 	end,
 	AddNodes = fun(ArgList) ->
 		lists:foldl(fun({ArgNode, Type}, TableResAcc) ->
-			'Result':and_then(fun(OldTable) ->
+			result:and_then(fun(OldTable) ->
 				AddNode(ArgNode, Type, OldTable)
 			end, TableResAcc)
 		end, TableRes, ArgList)
 	end,
-	MaybeTableWithArgs = 'Result':and_then(fun(ArgList) ->
+	MaybeTableWithArgs = result:and_then(fun(ArgList) ->
 		AddNodes(ArgList)
 	end, MaybeArgsList),
 
@@ -837,20 +837,20 @@ type_of_node(function, Node, BaseTable) ->
 		BindData = milang_ast:data(BindNode),
 		MatchNode = milang_ast_binding:match(BindData),
 		ExprNode = milang_ast_binding:expression(BindData),
-		TypeRes = 'Result':and_then(fun(T) ->
+		TypeRes = result:and_then(fun(T) ->
 			type_of_node(ExprNode, T)
 		end, Acc),
-		'Result':and_then_n([TypeRes, Acc], fun(Type, AccTable) ->
+		result:and_then_n([TypeRes, Acc], fun(Type, AccTable) ->
 			Id = identifier(MatchNode),
 			add_entry(Id, Type, AccTable)
 		end)
 	end, MaybeTableWithArgs, BindNodes),
 
 	ExprNode = milang_ast_function:expression(Data),
-	ExprRes = 'Result':and_then(fun(TableAcc) ->
+	ExprRes = result:and_then(fun(TableAcc) ->
 		type_of_node(ExprNode, TableAcc)
 	end, MaybeTableWithBinds),
-	'Result':map_n([ReversedArgsListRes, ExprRes], fun(Args, Res) ->
+	result:map_n([ReversedArgsListRes, ExprRes], fun(Args, Res) ->
 		ArgTypes = lists:map(fun({_FullArgNode, T}) ->
 			T
 		end, Args),
@@ -892,8 +892,8 @@ type_of_node(match, Node, Table) ->
 		({error, _} = Error, _) ->
 			Error
 	end, {ok, []}, ClauseHeads),
-	ExprAndHeadMatchRes = 'Result':and_then_n([ExpressionTypeRes, ClauseHeadsRes], fun(ExprType, HeadTypes) ->
-		'Result':foldl(fun(HeadType, _AccTable) ->
+	ExprAndHeadMatchRes = result:and_then_n([ExpressionTypeRes, ClauseHeadsRes], fun(ExprType, HeadTypes) ->
+		result:foldl(fun(HeadType, _AccTable) ->
 			check_type_match(ExprType, HeadType, Table)
 		end, Table, HeadTypes)
 	end),
@@ -913,12 +913,12 @@ type_of_node(match, Node, Table) ->
 		{error, _} = Error ->
 			Error;
 		{ok, [ Clause1 | ClauseTail]} ->
-			'Result':foldl(fun(ClauseType, _AccTable) ->
+			result:foldl(fun(ClauseType, _AccTable) ->
 				check_type_match(Clause1, ClauseType, Table)
 			end, Table, ClauseTail)
 	end,
 
-	'Result':map_n([AllClauseMatchesRes, ExprAndHeadMatchRes, ClauseMatchRes], fun(_, _, [Clause1 | _]) ->
+	result:map_n([AllClauseMatchesRes, ExprAndHeadMatchRes, ClauseMatchRes], fun(_, _, [Clause1 | _]) ->
 		Clause1
 	end);
 
@@ -932,20 +932,20 @@ type_of_node(match_clause, Node, Table) ->
 
 	HeadBindsTableRes = match_binds(Head, NewScopedTable),
 
-	WithBindsTableRes = 'Result':and_then(fun(HeadTable) ->
-		'Result':foldl(fun(BindNode, AccTable) ->
+	WithBindsTableRes = result:and_then(fun(HeadTable) ->
+		result:foldl(fun(BindNode, AccTable) ->
 			BindData = milang_ast:data(BindNode),
 			MatchNode = milang_ast_binding:match(BindData),
 			ExprNode = milang_ast_binding:expression(BindData),
 			TypeRes = type_of_node(ExprNode, AccTable),
-			'Result':and_then(fun(Type) ->
+			result:and_then(fun(Type) ->
 				Id = identifier(MatchNode),
 				add_entry(Id, Type, AccTable)
 			end, TypeRes)
 		end, HeadTable, Binds)
 	end, HeadBindsTableRes),
 
-	'Result':and_then(fun(BindTable) ->
+	result:and_then(fun(BindTable) ->
 		type_of_node(Expression, BindTable)
 	end, WithBindsTableRes);
 
@@ -964,7 +964,7 @@ type_of_node(match_type, Node, Table) ->
 			end
 	end, {ok, []}, Args),
 	PrimaryTypeRes = lookup(Name, Table),
-	MatchableTypeRes = 'Result':and_then(fun(PrimaryType) ->
+	MatchableTypeRes = result:and_then(fun(PrimaryType) ->
 		case PrimaryType of
 			#tv_data{ has_constructors = true } ->
 				{error, match_only_constructors};
@@ -976,7 +976,7 @@ type_of_node(match_type, Node, Table) ->
 				{error, {match_only_constructors, PrimaryType}}
 		end
 	end, PrimaryTypeRes),
-	'Result':and_then_n([MatchableTypeRes, ArgTypesRes], fun(MatchableType, ArgTypes) ->
+	result:and_then_n([MatchableTypeRes, ArgTypesRes], fun(MatchableType, ArgTypes) ->
 		case MatchableType of
 			#tv_data{ arg_names = Names } ->
 				if
@@ -1108,7 +1108,7 @@ match_binds(literal_string, _, Table) ->
 
 match_binds(match_type, Data, Table) ->
 	{match_type, _Name, Args} = Data,
-	'Result':foldl(fun(Arg, TableAcc) ->
+	result:foldl(fun(Arg, TableAcc) ->
 		match_binds(Arg, TableAcc)
 	end, Table, Args);
 
@@ -1116,15 +1116,15 @@ match_binds(match_list, {match_list, []}, Table) ->
 	{ok, Table};
 
 match_binds(match_list, {match_list, Matches}, Table) ->
-	'Result':foldl(fun(Match, AccTable) ->
+	result:foldl(fun(Match, AccTable) ->
 		match_binds(Match, AccTable)
 	end, Table, Matches);
 
 match_binds(match_list_head, {match_list_head, Matches, TailMatch}, Table) ->
-	HeadMatchRes = 'Result':foldl(fun(Match, TableAcc) ->
+	HeadMatchRes = result:foldl(fun(Match, TableAcc) ->
 		match_binds(Match, TableAcc)
 	end, Table, Matches),
-	'Result':and_then(fun(TableAcc) ->
+	result:and_then(fun(TableAcc) ->
 		match_binds(TailMatch, TableAcc)
 	end, HeadMatchRes);
 

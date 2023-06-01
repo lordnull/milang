@@ -12,7 +12,6 @@
 -type comment() :: {comment, milang_ast:location(), unicode:chardata()}.
 -type identifier_bound() :: {identifier, milang_ast:location(), mi_identifier()}.
 -type identifier_ignored() :: {identifier_ignored, milang_ast:location(), mi_identifier()}.
--type identifier_type() :: {identifier_type, milang_ast:location(), mi_identifier()}.
 -type literal_float() :: {literal_float, milang_ast:location(), float()}.
 -type literal_integer() :: {literal_integer, milang_ast:location(), integer()}.
 -type literal_string() :: {literal_string, milang_ast:location(), unicode:chardata()}.
@@ -58,7 +57,6 @@
 	| syntax_close_subexpression()
 	| syntax_bind()
 	| syntax_spec()
-	| identifier_type()
 	| identifier_ignored()
 	| identifier_bound()
 	| eof()
@@ -85,13 +83,10 @@
 	, literal_integer/0
 	, literal_string/0
 	, identifier_ignored/0
-	, identifier_type/0
 	, identifier_bound/0
 	, identifier_bindable/0
 	, syntax_bind/0
 	, syntax_implies/0
-	, syntax_infix_left/0
-	, syntax_infix_right/0
 	, syntax_infix_indicator/0
 	, syntax_dot/0
 	, syntax_element_seperator/0
@@ -111,7 +106,7 @@ tokens() ->
 		[ keyword_module()
 		, keyword_import()
 		, keyword_alias()
-		, keyword_type()
+		, keyword_data()
 		, keyword_spec()
 		, keyword_let()
 		, keyword_function()
@@ -130,8 +125,6 @@ tokens() ->
 		, literal_string()
 		, syntax_bind()
 		, syntax_implies()
-		, syntax_infix_left()
-		, syntax_infix_right()
 		, syntax_infix_indicator()
 		, syntax_dot()
 		, syntax_cons()
@@ -144,43 +137,41 @@ tokens() ->
 		, syntax_close_subexpression()
 		, identifier_bound()
 		, identifier_ignored()
-		, identifier_type()
 		]),
-	UntilEnd = parse:repeat_until(FirstOf, eof()),
-	parse:map(UntilEnd, fun({E, End}) ->
-		E ++ [End]
-	end).
+	UntilEnd = parse:in_context(root, parse_do:repeat_until(eof(), FirstOf)),
+	parse:map(fun(#{ list := Elements, ended := End }) ->
+		Elements ++ [End]
+	end, UntilEnd).
 
 grammer_space(AsAtom) ->
 	FollowedBy = parse:first_of(
 		[ comment()
 		, whitespace()
 		, eof()
-		, parse:character($.)
-		, parse:string(<<",,">>)
-		, parse:character($,)
-		, parse:character($()
-		, parse:character($))
-		, parse:character($[)
-		, parse:character($])
-		, parse:character(${)
-		, parse:character($})
+		, parse:chomp_if($.)
+		, parse:is_string(<<",,">>)
+		, parse:chomp_if($,)
+		, parse:chomp_if($()
+		, parse:chomp_if($))
+		, parse:chomp_if($[)
+		, parse:chomp_if($])
+		, parse:chomp_if(${)
+		, parse:chomp_if($})
 		]),
-	Test = parse:test(FollowedBy),
-	Keyword = parse:string(atom_to_binary(AsAtom, utf8)),
-	Series = parse:series([Keyword, Test]),
-	parse:map(Series, fun([_, _]) ->
+	Test = parse:peek(FollowedBy),
+	Keyword = parse:is_string(atom_to_binary(AsAtom, utf8)),
+	parse:map_n(fun(_, _) ->
 		AsAtom
-	end).
+	end, [Keyword, Test]).
 
 keyword(AsAtom) ->
-	parse:tag(keyword, grammer_space(AsAtom)).
+	parse:in_context(keyword, parse_do:tag(keyword, grammer_space(AsAtom))).
 
 keyword_module() ->
 	keyword(module).
 
-keyword_type() ->
-	keyword('type').
+keyword_data() ->
+	keyword('data').
 
 keyword_alias() ->
 	keyword('alias').
@@ -223,59 +214,135 @@ keyword_import() ->
 
 -spec whitespace() -> parse:parser(term(), whitespace()).
 whitespace() ->
-	parse:tag(whitespace, parse:regex("\\s+")).
+	parse:in_context(whitespace, parse_do:tag(whitespace, parse:regex("\\s+"))).
 
 -spec comment() -> parse:parser(term(), comment()).
 comment() ->
-	Repeat = parse:chomp_until(<<" -}">>),
-	Series = parse:series([parse:string(<<"{- ">>), Repeat, parse:string(<<" -}">>)]),
-	Mapper = fun([_, Doc, _]) ->
-		unicode:characters_to_binary(Doc)
-	end,
-	Mapped = parse:map(Series, Mapper),
-	parse:tag(comment, Mapped).
+	Characters = parse_do:enclosed(parse:is_string(<<"{-">>), parse:is_string(<<"-}">>), parse:chomp()),
+	parse:in_context(comment, parse_do:tag(comment, Characters)).
 
-identifier_type() ->
-	Regex = "[\\p{Lu}][^'\"\\[\\]\\{\\}\\(\\),«»\\.\\s]*",
-	identifier(Regex, identifier_type).
 
+identifier_local() ->
+	NeverValid = "\\.'\"\\[\\]\\{\\}\\(\\),\\s",
+	ValidFirstCharacters = ["[^_", NeverValid, "]"],
+	ValidTailCharacters = ["[^", NeverValid, "]"],
+	Regex = [ValidFirstCharacters, ValidTailCharacters, "*"],
+	RegexParse = parse:map_err(fun(nomatch) ->
+		invalid_identifier
+	end, parse:regex(Regex)),
+	Validated = parse:in_context(validating_identifier, parse:and_then(fun
+		([<<"=">>]) ->
+			parse:fail(solo_equals_invalid);
+		(SomeString) ->
+			IntegerRegex = "(-|\\+)?[0-9]+$",
+			case re:run(SomeString, IntegerRegex, [anchored]) of
+				nomatch ->
+					parse:success(SomeString);
+				{match, _} ->
+					parse:fail(identifier_looks_like_an_integer)
+			end
+	end, RegexParse)),
+	Squished = parse:map(fun unicode:characters_to_binary/1, Validated),
+	parse:in_context(identifier_local, Squished).
 
 identifier_bound() ->
-	Regex = "[^'\"\\[\\]\\{\\}\\(\\),«»_\\.\\s\\d\\p{Lu}][^'\"\\[\\]\\{\\}\\(\\),«»\\.\\s]*",
-	identifier(Regex, identifier_bound).
+	InContext = parse:in_context(identifier_bound, identifier_bound(get_local, [])),
+	parse_do:tag(identifier_bound, InContext).
 
-identifier(Regex, Tag) ->
-	ModulePartRegex = "([^'\"\\[\\]\\{\\}\\(\\),«»\\.\\s]+\\.)*",
-	FullRegex = [ModulePartRegex, Regex],
-	ParseBase = parse:regex(FullRegex, first),
-	Identifier = parse:map(ParseBase, fun(Iolist) ->
-		AsBinary = unicode:characters_to_binary(Iolist),
-		Split = string:split(AsBinary, ".", all),
-		[Local | RemoteReversed] = lists:reverse(Split),
-		case lists:join($., lists:reverse(RemoteReversed)) of
-			[] ->
-				Local;
-			Remote ->
-				#{ local => Local, module => unicode:characters_to_binary(Remote) }
-		end
-	end),
-	Tagged = parse:tag(Tag, Identifier),
-	parse:andThen(Tagged, fun
-		({_, _, <<"=">>}) ->
-			parse:fail(solo_equals_invalid);
-		({_, _, #{ local := <<"=">>}}) ->
-			parse:fail(solo_equals_invalid);
-		(V) ->
-			parse:success(V)
-	end).
+identifier_bound(get_local, Acc) ->
+	parse:and_then(fun(Local) ->
+		io:format("get_local ~p~n", [Local]),
+		identifier_bound(dot_or_space, [Local | Acc])
+	end, identifier_local());
+
+identifier_bound(dot_or_space, Acc) ->
+	DotTest = parse:chomp_if($.),
+	IfDot = fun(_) ->
+		io:format("dot_or_space, is dot~n", []),
+		identifier_bound(space_or_local, Acc)
+	end,
+
+	SpaceTest = whitespace(),
+	IfSpace = fun(_) ->
+		io:format("dot_or_space, is space~n", []),
+		identifier_bound(finalize, Acc)
+	end,
+
+	EndOfInput = parse:end_of_input(),
+	IfEndOfInput = fun(_) ->
+		io:format("dot_or_space, is eof~n", []),
+		identifier_bound(finalize, Acc)
+	end,
+
+	Branching = parse_do:branch(
+		[ { DotTest, IfDot}
+		, { SpaceTest, IfSpace}
+		, { EndOfInput, IfEndOfInput}
+		]),
+	parse:map_err(fun
+		({no_branches_matched, _}) ->
+			expected_dot_or_space;
+		(Error) ->
+			Error
+	end, Branching);
+
+identifier_bound(space_or_local, Acc) ->
+	SpaceTest = whitespace(),
+	IfSpace = fun(_) ->
+		io:format("space_or_local, is space~n", []),
+		identifier_bound(finalize, Acc)
+	end,
+	Space = {SpaceTest, IfSpace},
+
+	EndOfInputTest = parse:end_of_input(),
+	IfEndOfInput = fun(_) ->
+		io:format("space_or_local, is end of input~n", []),
+		identifier_bound(finalize, Acc)
+	end,
+	EndOfInput = { EndOfInputTest, IfEndOfInput},
+
+	Else = {parse:success(ok), fun(ok) ->
+		io:format("space_or_local, trying local as is not space~n", []),
+		identifier_bound(get_local, Acc)
+	end},
+
+	Branching = parse_do:branch([ Space, EndOfInput, Else ]),
+	parse:map_err(fun
+		({no_branches_matched, [LocalBranch | _]}) ->
+			LocalBranch;
+		(Error) ->
+			Error
+	end, Branching);
+
+identifier_bound(finalize, []) ->
+	io:format("finalize none~n"),
+	parse:fail(no_parts);
+identifier_bound(finalize, [JustOne]) ->
+	io:format("finalize, just one: ~p", [JustOne]),
+	parse:success(JustOne);
+identifier_bound(finalize, [Local | RevModule]) ->
+	io:format("finalized local ~p and module parts ~p~n", [Local, RevModule]),
+	Module = lists:join($., lists:reverse(RevModule)),
+	parse:success(#{ local => Local, module => unicode:characters_to_binary(Module)}).
 
 identifier_ignored() ->
-	Regex = "_[^'\"\\[\\]\\{\\}\\(\\),«»_\\.\\s]*",
-	ParseBase = parse:regex(Regex, first),
-	parse:tag(identifier_ignored, ParseBase).
+	GetIgnoreMark = parse:chomp_if($_),
+	GetIdent = parse:and_then(fun(_) ->
+		identifier_regex()
+	end, GetIgnoreMark),
+	parse:in_context(identifier_ignored, parse_do:tag(identifier_ignored, GetIdent)).
+
+identifier_regex() ->
+	Regex = "[^'\"\\[\\]\\{\\}\\(\\),\\.\\s]*",
+	parse:map(fun([W]) ->
+		W
+	end, parse:regex(Regex)).
 
 identifier_bindable() ->
-	parse:first_of([ identifier_bound(), identifier_ignored() ]).
+	parse:first_of(
+		[ parse_do:tag(identifier_bound, identifier_local())
+		, identifier_ignored()
+		]).
 
 -spec literal_string() -> parse:parser(term(), literal_string()).
 literal_string() ->
@@ -288,62 +355,49 @@ literal_string() ->
 	% I've also extended it so it captures the inner string.
 	Regex = <<"\"((?:[^\"\\\\]|\\\\.)*)\"">>,
 	ParsedRegex = parse:regex(Regex),
-	MappedRegex = parse:map(ParsedRegex, fun([_, S]) ->
+	MappedRegex = parse:map(fun([_, S]) ->
 		S
-	end),
-	parse:tag(literal_string, MappedRegex).
+	end, ParsedRegex),
+	parse:in_context(literal_string, parse_do:tag(literal_string, MappedRegex)).
 
 -spec literal_float() -> parse:parser(term(), literal_float()).
 literal_float() ->
-	Sign = parse:optional(parse:first_of([parse:character($-), parse:character($+)])),
-	NumberRegex = parse:regex("[0-9]+"),
-	Series = parse:series([Sign, NumberRegex, parse:character($.), NumberRegex]),
-	Tagged = parse:tag(literal_float, Series),
-	parse:map(Tagged, fun({T, L, Chars}) ->
-		AsString = unicode:characters_to_binary(Chars),
-		AsFloat = binary_to_float(AsString),
-		{T, L, AsFloat}
-	end).
+	Regex = "((-|\\+)?[0-9]+\\.[0-9]+)",
+	InCtx = parse:in_context(?FUNCTION_NAME, parse:regex(Regex)),
+	AsFloat = parse:map(fun([FullMatch, _]) ->
+		AsString = unicode:characters_to_binary(FullMatch),
+		binary_to_float(AsString)
+	end, InCtx),
+	parse_do:tag(literal_float, AsFloat).
 
 -spec literal_integer() -> parse:parser(term(), literal_integer()).
 literal_integer() ->
-	Sign = parse:optional(parse:first_of([parse:character($-), parse:character($+)])),
-	NumberRegex = parse:regex("[0-9]+"),
-	Series = parse:series([Sign, NumberRegex]),
-	Tagged = parse:tag(literal_integer, Series),
-	parse:map(Tagged, fun({T, L, Chars}) ->
-		AsBinary = unicode:characters_to_binary(Chars),
-		AsInt = binary_to_integer(AsBinary, 10),
-		{T, L, AsInt}
-	end).
+	Regex = "((-|\\+)?[0-9]+)",
+	InCtx = parse:in_context(?FUNCTION_NAME, parse:regex(Regex)),
+	AsInteger = parse:map(fun([FullMatch, _]) ->
+		AsBinary = unicode:characters_to_binary(FullMatch),
+		binary_to_integer(AsBinary)
+	end, InCtx),
+	parse_do:tag(literal_integer, AsInteger).
 
 -spec syntax_implies() -> parse:parser(term(), syntax_implies()).
 syntax_implies()  ->
-	parse:tag(syntax_implies, grammer_space('->')).
-
--spec syntax_infix_left() -> parse:parser(term(), syntax_infix_left()).
-syntax_infix_left() ->
-	parse:tag(syntax_infix_left, parse:regex(<<"»+"/utf8>>, first)).
-
--spec syntax_infix_right() -> parse:parser(term(), syntax_infix_right()).
-syntax_infix_right() ->
-	parse:tag(syntax_infix_right, parse:regex(<<"«+"/utf8>>, first)).
-
+	parse:in_context(syntax_implies, parse_do:tag(syntax_implies, grammer_space('->'))).
 
 -spec syntax_infix_indicator() -> parse:parser(term(), syntax_infix_indicator()).
 syntax_infix_indicator() ->
-	parse:tag(syntax_infix_indicator, parse:character($')).
+	parse:in_context(?FUNCTION_NAME, parse_do:tag(syntax_infix_indicator, parse:chomp_if($'))).
 
 -spec syntax_dot() -> parse:parser(term(), syntax_dot()).
 syntax_dot() ->
-	parse:tag(syntax_dot, grammer_space('.')).
+	parse:in_context(?FUNCTION_NAME, parse_do:tag(syntax_dot, grammer_space('.'))).
 
 syntax_cons() ->
-	parse:tag(syntax_cons, parse:string(<<",,">>)).
+	parse:in_context(?FUNCTION_NAME, parse_do:tag(syntax_cons, parse:is_string(<<",,">>))).
 
 -spec syntax_element_seperator() -> parse:parser(term(), syntax_element_seperator()).
 syntax_element_seperator() ->
-	parse:tag(syntax_element_seperator, parse:character($,)).
+	parse:in_context(?FUNCTION_NAME, parse_do:tag(syntax_element_seperator, parse:chomp_if($,))).
 
 -type oc_parser() :: char() | unicode:chardata() | parse:parser(any(), any()).
 -spec
@@ -352,14 +406,14 @@ syntax_element_seperator() ->
 		; (oc_parser(), subexpression) -> parse:parser(term(), syntax_open_subexpression()).
 
 syntax_open(Char, Type) when is_integer(Char) ->
-	syntax_open(parse:character(Char), Type);
+	syntax_open(parse:chomp_if(Char), Type);
 
 syntax_open(Bin, Type) when is_binary(Bin) ->
-	syntax_open(parse:string(Bin), Type);
+	syntax_open(parse:is_string(Bin), Type);
 
 syntax_open(Parser, Type) ->
-	Mapped = parse:map(Parser, fun(_) -> Type end),
-	parse:tag(syntax_open, Mapped).
+	Mapped = parse:map(fun(_) -> Type end, Parser),
+	parse_do:tag(syntax_open, Mapped).
 
 -spec
 	syntax_close(oc_parser(), list) -> parse:parser(term(), syntax_close_list())
@@ -367,43 +421,43 @@ syntax_open(Parser, Type) ->
 		; (oc_parser(), subexpression) -> parse:parser(term(), syntax_close_subexpression()).
 
 syntax_close(Char, Type) when is_integer(Char) ->
-	syntax_close(parse:character(Char), Type);
+	syntax_close(parse:chomp_if(Char), Type);
 
 syntax_close(Bin, Type) when is_binary(Bin) ->
-	syntax_close(parse:string(Bin), Type);
+	syntax_close(parse:is_string(Bin), Type);
 
 syntax_close(Parser, Type) ->
-	Mapped = parse:map(Parser, fun(_) -> Type end),
-	parse:tag(syntax_close, Mapped).
+	Mapped = parse:map(fun(_) -> Type end, Parser),
+	parse_do:tag(syntax_close, Mapped).
 
 -spec syntax_open_list() -> parse:parser(term(), syntax_open_list()).
 syntax_open_list() ->
-	syntax_open($[, list).
+	parse:in_context(?FUNCTION_NAME, syntax_open($[, list)).
 
 -spec syntax_close_list() -> parse:parser(term(), syntax_close_list()).
 syntax_close_list() ->
-	syntax_close($], list).
+	parse:in_context(?FUNCTION_NAME, syntax_close($], list)).
 
 -spec syntax_open_record() -> parse:parser(term(), syntax_open_record()).
 syntax_open_record() ->
-	syntax_open(<<"{">>, record).
+	parse:in_context(?FUNCTION_NAME, syntax_open(<<"{">>, record)).
 
 -spec syntax_close_record() -> parse:parser(term(), syntax_close_record()).
 syntax_close_record() ->
-	syntax_close(<<"}">>, record).
+	parse:in_context(?FUNCTION_NAME, syntax_close(<<"}">>, record)).
 
 -spec syntax_open_subexpression() -> parse:parser(term(), syntax_open_subexpression()).
 syntax_open_subexpression() ->
-	syntax_open($(, subexpression).
+	parse:in_context(?FUNCTION_NAME, syntax_open($(, subexpression)).
 
 -spec syntax_close_subexpression() -> parse:parser(term(), syntax_close_subexpression()).
 syntax_close_subexpression() ->
-	syntax_close($), subexpression).
+	parse:in_context(?FUNCTION_NAME, syntax_close($), subexpression)).
 
 -spec syntax_bind() -> parse:parser(term(), syntax_bind()).
 syntax_bind() ->
-	parse:tag(syntax_bind, grammer_space('=')).
+	parse:in_context(?FUNCTION_NAME, parse_do:tag(syntax_bind, grammer_space('='))).
 
 -spec eof() -> parse:parser(term(), eof()).
 eof() ->
-	parse:tag(eof, parse:end_of_input()).
+	parse:in_context(?FUNCTION_NAME, parse_do:tag(eof, parse:end_of_input())).

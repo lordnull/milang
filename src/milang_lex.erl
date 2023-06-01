@@ -61,8 +61,8 @@ root({expect_declaration, Comments}, [{keyword, L, alias} | Tokens], Options, Ac
 		Error ->
 			Error
 	end;
-root({expect_declaration, Comments}, [{keyword, _, type} = T | Tokens], Options, Acc) ->
-	case declaration_type(Comments ++ [T] ++ Tokens, Options) of
+root({expect_declaration, Comments}, [{keyword, _, data} = T | Tokens], Options, Acc) ->
+	case declaration_data(Comments ++ [T] ++ Tokens, Options) of
 		{ok, Declaration, NewTokens} ->
 			root(consume_whitespace, NewTokens, Options, [Declaration | Acc]);
 		Error ->
@@ -136,8 +136,8 @@ expose_declaration({declaration, ExposedProtoNode}, ProtoNode, [{keyword, _, 'sp
 		Error ->
 			Error
 	end;
-expose_declaration({declaration, ExposedProtoNode}, ProtoNode, [{keyword, _, 'type'} | Tokens], Options) ->
-	case declaration_type(ExposedProtoNode, Tokens, Options) of
+expose_declaration({declaration, ExposedProtoNode}, ProtoNode, [{keyword, _, 'data'} | Tokens], Options) ->
+	case declaration_data(ExposedProtoNode, Tokens, Options) of
 		{ok, Declaration, NewTokens} ->
 			FinalNode = milang_ast:transform_data(fun(_) -> milang_ast_expose:new(Declaration) end, ProtoNode),
 			{ok, FinalNode, NewTokens};
@@ -161,7 +161,7 @@ expose_declaration({declaration, ExposedProtoNode}, ProtoNode, [{keyword, _, 'cl
 			Error
 	end;
 expose_declaration({declaration, ExposedProtoNode}, _ProtoNode, [Token | _], _Options) ->
-	lex_error(Token, ['class', 'type', 'alias', 'spec'], {simple_expose, {declaration, ExposedProtoNode}}).
+	lex_error(Token, ['class', 'data', 'alias', 'spec'], {simple_expose, {declaration, ExposedProtoNode}}).
 
 expose_all_declaration(ProtoNode, Tokens, Options) ->
 	expose_all_declaration(consume_whitespace, ProtoNode, Tokens, Options).
@@ -171,8 +171,8 @@ expose_all_declaration(consume_whitespace, ProtoNode, Tokens, Options) ->
 	NewNode = milang_ast:add_doc(Comments, ProtoNode),
 	expose_all_declaration(declaration, NewNode, TokensSansSpace, Options);
 
-expose_all_declaration(declaration, ProtoNode, [{keyword, _, 'type'} | Tokens], Options) ->
-	case declaration_type(ProtoNode, Tokens, Options) of
+expose_all_declaration(declaration, ProtoNode, [{keyword, _, 'data'} | Tokens], Options) ->
+	case declaration_data(ProtoNode, Tokens, Options) of
 		{ok, Declaration, NewTokens} ->
 			FinalNode = milang_ast:transform_data(fun(_) -> milang_ast_expose:new(Declaration, expose_all) end, ProtoNode),
 			{ok, FinalNode, NewTokens};
@@ -180,7 +180,7 @@ expose_all_declaration(declaration, ProtoNode, [{keyword, _, 'type'} | Tokens], 
 			Error
 	end;
 expose_all_declaration(declaration, _ProtoNode, [Token | _], _Options) ->
-	lex_error(Token, 'type', expose_all).
+	lex_error(Token, 'data', expose_all).
 
 declaration_spec(ProtoNode, Tokens, Options) ->
 	case space(Tokens) of
@@ -559,8 +559,8 @@ type(GiveProtoNode, Tokens, Options) ->
 
 type(start, ProtoNode, Tokens, Options) ->
 	case Tokens of
-		[{identifier_type, L, Name} | Tail] ->
-			NameNode = milang_ast:ast_node(L, [], {identifier_type, Name}),
+		[{identifier_bound, L, Name} | Tail] ->
+			NameNode = milang_ast:ast_node(L, [], {identifier_bound, Name}),
 			TypeData = milang_ast_concrete:new(NameNode, []),
 			TypeNode = milang_ast:ast_node(L, [], TypeData),
 			type({constructor, TypeNode}, ProtoNode, Tail, Options);
@@ -570,16 +570,10 @@ type(start, ProtoNode, Tokens, Options) ->
 				[ Var | D]
 			end, ProtoNode),
 			type(after_ignored_var, NewNode, Tail, Options);
-		[{identifier_bound, L, Name} | Tail] ->
-			Var = milang_ast:ast_node(L, [], {identifier_bound, Name}),
-			NewNode = milang_ast:transform_data(fun(D) ->
-				[ Var | D]
-			end, ProtoNode),
-			type(after_ignored_var, NewNode, Tail, Options);
 		[{syntax_open, L, subexpression} | Tail] ->
 			type({subexpression, milang_ast:ast_node(L, [], [])}, ProtoNode, Tail, Options);
 		[H | _] ->
-			lex_error(H, [identifier_type, syntax_open, identifier_bound, identifier_type], {type, start})
+			lex_error(H, [syntax_open, identifier_bound, identifier_ignored], {type, start})
 	end;
 
 type(after_ignored_var, ProtoNode, Tokens, Options) ->
@@ -639,14 +633,6 @@ type({constructor, TypeNode}, ProtoNode, Tokens, Options) ->
 				[ NewNode | D ]
 			end, ProtoNode),
 			type(restart, NewProto, Tail, Options);
-		{true, Comments, [{identifier_type, L, Name} | Tail]} ->
-			NewNode = milang_ast:transform_data(fun(D) ->
-				IdentifierNode = milang_ast:ast_node(L, Comments, milang_ast_identifier:type(Name)),
-				OldArgs = milang_ast_concrete:args(D),
-				NewArgs = [ IdentifierNode | OldArgs ],
-				milang_ast_concrete:args(NewArgs, D)
-			end, TypeNode),
-			type({constructor, NewNode}, ProtoNode, Tail, Options);
 		{true, Comments, [{identifier_bound, L, Name} | Tail]} ->
 			NewNode = milang_ast:transform_data(fun(D) ->
 				IdentifierNode = milang_ast:ast_node(L, Comments, milang_ast_identifier:bound(Name)),
@@ -709,46 +695,47 @@ type({subexpression_close, Node}, ProtoNode, Tokens, Options) ->
 	end.
 
 
-declaration_type(Tokens, Options) ->
+declaration_data(Tokens, Options) ->
 	{_, Comments, TokensSansSpace} = space(Tokens),
 	[{_, L, _} | Tail] = TokensSansSpace,
 	BaseData = milang_ast_type:new(undefined, [], [], []),
 	ProtoNode = milang_ast:ast_node(L, Comments, BaseData),
-	declaration_type(ProtoNode, Tail, Options).
+	declaration_data(ProtoNode, Tail, Options).
 
-declaration_type(ProtoNode, Tokens, Options) ->
-	declaration_type(space_before_name, ProtoNode, Tokens, Options).
+declaration_data(ProtoNode, Tokens, Options) ->
+	declaration_data(space_before_name, ProtoNode, Tokens, Options).
 
-declaration_type(space_before_name, ProtoNode, Tokens, Options) ->
+declaration_data(space_before_name, ProtoNode, Tokens, Options) ->
 	case space(Tokens) of
 		{false, _, _} ->
-			lex_error(hd(Tokens), space, {declaration_type, {space_before_name, ProtoNode}});
+			lex_error(hd(Tokens), space, {declaration_data, {space_before_name, ProtoNode}});
 		{true, Comments, TokensSansSpace} ->
 			NewNode = milang_ast:add_doc(Comments, ProtoNode),
-			declaration_type(name, NewNode, TokensSansSpace, Options)
+			declaration_data(name, NewNode, TokensSansSpace, Options)
 	end;
 
-declaration_type(name, ProtoNode, Tokens, Options) ->
-	case identifier_type(Tokens, Options) of
-		{ok, NameNode, NewTokens} ->
+declaration_data(name, ProtoNode, Tokens, Options) ->
+	case Tokens of
+		[{identifier_bound, L, Name} | Tail] ->
+			NameNode = milang_ast:ast_node(L, [], {identifier_bound, Name}),
 			NewNode = milang_ast:transform_data(fun(M) -> milang_ast_type:name(NameNode, M) end, ProtoNode),
-			declaration_type(got_name, NewNode, NewTokens, Options);
-		Error ->
-			Error
+			declaration_data(got_name, NewNode, Tail, Options);
+		_ ->
+			lex_error(hd(Tokens), [identifier_bound], {declaration_data, {name, ProtoNode}})
 	end;
 
-declaration_type(got_name, ProtoNode, Tokens, Options) ->
+declaration_data(got_name, ProtoNode, Tokens, Options) ->
 	{HasSpace, Comments, TokensSansSpace} = space(Tokens),
 	case {HasSpace, TokensSansSpace} of
 		{_, [{syntax_dot, _, _} | Tail]} ->
 			{ok, ProtoNode, Tail};
 		{false, _} ->
-			lex_error(hd(Tokens), [space, dot], {declaration_type, {got_name, ProtoNode}});
+			lex_error(hd(Tokens), [space, dot], {declaration_data, {got_name, ProtoNode}});
 		{_, [{syntax_keyword, L, 'when'} | Tail]} ->
 			ConstraintsNode = milang_ast:ast_node(L, Comments),
-			declaration_type({constraints_start, ConstraintsNode}, ProtoNode, Tail, Options);
+			declaration_data({constraints_start, ConstraintsNode}, ProtoNode, Tail, Options);
 		{_, [{syntax_bind, _, _} | Tail]} ->
-			declaration_type(start_constructors, ProtoNode, Tail, Options);
+			declaration_data(start_constructors, ProtoNode, Tail, Options);
 		{_, [{identifier_bound, L, Name} | Tail]} ->
 			ArgNode = milang_ast:ast_node(L, Comments, {identifier_bound, Name}),
 			NewNode = milang_ast:transform_data(fun(M) ->
@@ -756,58 +743,58 @@ declaration_type(got_name, ProtoNode, Tokens, Options) ->
 				NewArgs = OldArgs ++ [ArgNode],
 				milang_ast_type:args(NewArgs, M)
 			end, ProtoNode),
-			declaration_type(got_name, NewNode, Tail, Options);
+			declaration_data(got_name, NewNode, Tail, Options);
 		_ ->
-			lex_error(hd(TokensSansSpace), [bind, 'when', identifier_bound], {declaration_type, {got_name_and_space, ProtoNode}})
+			lex_error(hd(TokensSansSpace), [bind, 'when', identifier_bound], {declaration_data, {got_name_and_space, ProtoNode}})
 	end;
 
-declaration_type({constraints_start, CNode}, ProtoNode, Tokens, Options) ->
+declaration_data({constraints_start, CNode}, ProtoNode, Tokens, Options) ->
 	case constraints(CNode, Tokens, Options) of
 		{ok, NewCNode, NewTokens} ->
 			NewNode = milang_ast:transform_data(fun(M) ->
 				milang_ast_type:constraints(NewCNode, M)
 			end, ProtoNode),
-			declaration_type(bind_or_done, NewNode, NewTokens, Options);
+			declaration_data(bind_or_done, NewNode, NewTokens, Options);
 		Error ->
 			Error
 	end;
 
-declaration_type(bind_or_done, ProtoNode, Tokens, Options) ->
+declaration_data(bind_or_done, ProtoNode, Tokens, Options) ->
 	case space(Tokens) of
 		{_, _, [{syntax_dot, _, _} | Tail]} ->
 			{ok, ProtoNode, Tail};
 		{false, _, _} ->
-			lex_error(hd(Tokens), space, {declaration_type, {bind_or_done, ProtoNode}});
+			lex_error(hd(Tokens), space, {declaration_data, {bind_or_done, ProtoNode}});
 		{true, _, [{syntax_bind, _, _} | Tail]} ->
-			declaration_type(start_constructors, ProtoNode, Tail, Options);
+			declaration_data(start_constructors, ProtoNode, Tail, Options);
 		{_, _, TokensSansSpace} ->
-			lex_error(hd(TokensSansSpace), [bind, dot], {declaration_type, {bind_or_done}})
+			lex_error(hd(TokensSansSpace), [bind, dot], {declaration_data, {bind_or_done}})
 	end;
 
-declaration_type(start_constructors, ProtoNode, Tokens, Options) ->
+declaration_data(start_constructors, ProtoNode, Tokens, Options) ->
 	case space(Tokens) of
 		{false, _, _} ->
-			lex_error(hd(Tokens), space, {declaration_type, start_constructors});
+			lex_error(hd(Tokens), space, {declaration_data, start_constructors});
 		{true, _Comments, TokensSansSpace} ->
-			declaration_type(constructors, ProtoNode, TokensSansSpace, Options)
+			declaration_data(constructors, ProtoNode, TokensSansSpace, Options)
 	end;
 
-declaration_type(constructors, ProtoNode, Tokens, Options) ->
+declaration_data(constructors, ProtoNode, Tokens, Options) ->
 	case generic_list(Tokens, Options, fun declaration_constructor/2) of
 		{ok, List, NewTokens} ->
 			NewNode = milang_ast:transform_data(fun(M) -> milang_ast_type:constructors(List, M) end, ProtoNode),
-			declaration_type(dot, NewNode, NewTokens, Options);
+			declaration_data(dot, NewNode, NewTokens, Options);
 		Error ->
 			Error
 	end;
 
-declaration_type(dot, ProtoNode, Tokens, _Options) ->
+declaration_data(dot, ProtoNode, Tokens, _Options) ->
 	{_, _Comments, TokensSansSpace} = space(Tokens),
 	case TokensSansSpace of
 		[{syntax_dot, _, _} | Tail] ->
 			{ok, ProtoNode, Tail};
 		[T | _] ->
-			lex_error(T, dot, {declaration_type, {dot, ProtoNode}})
+			lex_error(T, dot, {declaration_data, {dot, ProtoNode}})
 	end.
 
 constraints(ProtoNode, Tokens, Options) ->

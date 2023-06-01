@@ -2,7 +2,7 @@
 -behavior(ct_suite).
 
 -include_lib("stdlib/include/assert.hrl").
--include_lib("milang/src/milang_ast.hrl").
+%-include_lib("milang/src/milang_ast.hrl").
 
 -compile([export_all]).
 

@@ -83,12 +83,12 @@ from_ast(#milang_ast{ data = #expression_infix{} } = Node) ->
 	milang_log:it(debug, ?log_info, "The head: ~p", [Head]),
 	MaybePriorToAssoc = weight_to_assoc(InfixOps),
 	milang_log:it(debug, ?log_info, "wieghts and assoc: ~p", [MaybePriorToAssoc]),
-	MaybeTree = 'Result':map(fun(WeightToAssocMap) ->
+	MaybeTree = result:map(fun(WeightToAssocMap) ->
 		WeightToAssoc = lists:sort(maps:to_list(WeightToAssocMap)),
 		to_tree(Node, WeightToAssoc)
 	end, MaybePriorToAssoc),
 	milang_log:it(debug, ?log_info, "Dah tree: ~p", [MaybeTree]),
-	'Result':map(fun tree_to_ast/1, MaybeTree);
+	result:map(fun tree_to_ast/1, MaybeTree);
 from_ast(Node) ->
 	{ok, Node}.
 

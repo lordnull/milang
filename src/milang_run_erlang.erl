@@ -1,6 +1,7 @@
 %%% @doc The primary bridge between milang and erlang. This is primarily to
 %%% deal with the these differences:
 %%% milang                  | erlang
+%%% ------------------------+----------------------------------
 %%% lazy                    | eager
 %%% auto-curry              | no-curry
 %%% top level bind          | only functions at module level
@@ -45,7 +46,7 @@ as_export_entry(Node) ->
 		_ ->
 			{error, only_expose}
 	end,
-	IsSpec = 'Result':and_then(fun(InNode) ->
+	IsSpec = result:and_then(fun(InNode) ->
 		Data = milang_ast:data(InNode),
 		Declaration = milang_ast_expose:declaration(Data),
 		case milang_ast:type(Declaration) of
@@ -55,7 +56,7 @@ as_export_entry(Node) ->
 				{error, only_spec} % TODO for now
 		end
 	end, IsExpose),
-	DahFunc = 'Result':and_then(fun(InNode) ->
+	DahFunc = result:and_then(fun(InNode) ->
 		Data = milang_ast:data(InNode),
 		SpecNode = milang_ast_expose:declaration(Data),
 		Spec = milang_ast:data(SpecNode),
@@ -161,27 +162,27 @@ write_function({ok, alias}, AST, Symbols, WriteFun) ->
 	LocalNameRaw = milang_ast:data(NameNode),
 	LocalNameRes = (fun
 		({identifier_type, L}) when is_map(L) ->
-			'Result':'Err'(cannot_alias_to_remote_name);
+			result:err(cannot_alias_to_remote_name);
 		({identifier_type, L}) when is_binary(L) ->
-			'Result':'Ok'(L);
+			result:ok(L);
 		(Wut) ->
 			?LOG_ERROR("Cannot alias to given name ~p", [Wut]),
-			'Result':'Err'({cannot_alias_with_name, Wut})
+			result:err({cannot_alias_with_name, Wut})
 	end)(LocalNameRaw),
 	?LOG_DEBUG("LocalNameRes: ~p", [LocalNameRes]),
 	OriginalNode = milang_ast_alias:original(Data),
 	OriginalFoundRes = lookup_for_alias(OriginalNode, Symbols),
 	?LOG_DEBUG("OriginalFoundRes: ~p", [OriginalFoundRes]),
-	OriginalRes = 'Result':map(fun(SymbolType) ->
+	OriginalRes = result:map(fun(SymbolType) ->
 		{milang_ast:data(OriginalNode), SymbolType}
 	end, OriginalFoundRes),
 	?LOG_DEBUG("OriginalRes: ~p", [OriginalRes]),
-	ResultConstructors = 'Result':and_then(fun(OriginalFound) ->
+	ResultConstructors = result:and_then(fun(OriginalFound) ->
 		{OriginalData, OriginalSymbol} = OriginalFound,
 		OriginalNodeType = milang_ast:type_simply(OriginalNode),
 		case {OriginalNodeType, OriginalSymbol} of
 			{concrete, {type, false}} ->
-				'Result':'Ok'([milang_ast_concrete:name(OriginalData)]);
+				result:ok([milang_ast_concrete:name(OriginalData)]);
 			{concrete, {type, true}} ->
 				OriginalNameNode = milang_ast_concrete:name(OriginalData),
 				{_, OriginalName} = milang_ast:data(OriginalNameNode),
@@ -193,17 +194,17 @@ write_function({ok, alias}, AST, Symbols, WriteFun) ->
 							Acc
 					end
 				end, [], Symbols),
-				'Result':'Ok'(Constructors);
+				result:ok(Constructors);
 			Wut ->
 				?LOG_ERROR("Cannot import consructors since I don't know the type: ~p~n"
 					"OriginalData: ~p~n"
 					"OriginalSymbol: ~p"
 					, [Wut, OriginalData, OriginalSymbol]),
-				'Result':'Err'(unsupported_constructor_aliased)
+				result:err(unsupported_constructor_aliased)
 		end
 	end, OriginalRes),
 	?LOG_DEBUG("ResultConstructors: ~p", [ResultConstructors]),
-	_ = 'Result':map(fun(Constructors) ->
+	_ = result:map(fun(Constructors) ->
 		lists:foreach(fun(Constructor) ->
 			case Constructor of
 				#{ module := M, local := Local } ->
@@ -215,18 +216,18 @@ write_function({ok, alias}, AST, Symbols, WriteFun) ->
 			end
 		end, Constructors)
 	end, ResultConstructors),
-	SymbolsTableWithOriginal = 'Result':and_then_n([LocalNameRes, OriginalRes], fun(LocalName, Original) ->
+	SymbolsTableWithOriginal = result:and_then_n([LocalNameRes, OriginalRes], fun(LocalName, Original) ->
 		{OriginalData, _} = Original,
 		OriginalName = milang_ast_concrete:name(OriginalData),
 		milang_scope:insert(LocalName, {alias, OriginalName}, Symbols)
 	end),
-	SymbolsWithAllRes = 'Result':and_then_n([ResultConstructors, SymbolsTableWithOriginal], fun(Constructors, InSymbols) ->
-		'Result':foldl(fun(Constructor, TableAcc) ->
+	SymbolsWithAllRes = result:and_then_n([ResultConstructors, SymbolsTableWithOriginal], fun(Constructors, InSymbols) ->
+		result:foldl(fun(Constructor, TableAcc) ->
 			case Constructor of
 				#{ local := L } ->
 					milang_scope:insert(L, Constructor, TableAcc);
 				_ ->
-					'Result':'Ok'(TableAcc)
+					result:ok(TableAcc)
 			end
 		end, InSymbols, Constructors)
 	end),
