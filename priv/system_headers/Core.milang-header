@@ -1,15 +1,15 @@
 
-type Core.String.
+data Core.String.
 
-type Core.Integer.
+data Core.Integer.
 
-type Core.Unit.
+data Core.Unit.
 
-type Core.Float.
+data Core.Float.
 
-type Core.Boolean = [, Core.True , Core.False ].
+data Core.Boolean = [, Core.True , Core.False ].
 
-type Core.Never = [, Core.RecurseForever Core.Never].
+data Core.Never = [, Core.RecurseForever Core.Never].
 
 spec Core.|> = a -> (a -> b) -> b.
 
@@ -61,7 +61,7 @@ teach Core.Boolean class Core.Equality ->
 	let == = Core.boolean-==.
 	.
 
-type Core.Order = [
+data Core.Order = [
 	, Core.LessThan
 	, Core.GreaterThan
 	, Core.EqualTo

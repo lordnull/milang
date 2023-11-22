@@ -582,10 +582,8 @@ tag(Tag, Parser) ->
 	end.
 
 tag_acc({error, _} = Wut, _, _TagData) ->
-	%io:format("Tag attempt failed.~n    TagData: ~p~n    Error: ~p~n", [_TagData, Wut]),
 	Wut;
 tag_acc({ok, C, Value}, _, {Tag, Location}) ->
-	%io:format("Popping tag~n    Tag: ~p~n    Location:~p~n    Chomped:~p~n    Value: ~p~n", [Tag, Location, C, Value]),
 	{ok, C, {Tag, Location, Value}}.
 
 -spec chomp() -> parser(none(), unicode:unicode_binary()).

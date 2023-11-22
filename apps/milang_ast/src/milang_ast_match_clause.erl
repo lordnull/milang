@@ -1,39 +1,39 @@
 -module(milang_ast_match_clause).
 
--type match()
-	:: {literal_string, unicode:chardata()}
-	|  {literal_integer, integer()}
-	|  {literal_float, float()}
-	|  {match_list, [ match() ]}
-	|  {match_list_head, [ match() ], milang_ast_identifier:identifier()}
-	|  {match_type, milang_ast_identifier:identifier(), [ match() ]}
-	|  {identifier_ignored, unicode:chardata()}
-	|  {identifier_bound, unicode:chardata()}
-	.
-
-
--record(match_clause,
-	{ match
-	, binds = []
-	, expression
+-record(?MODULE,
+	{ match :: milang_ast_match_bind:ast_node()
+	, expression :: milang_ast_expression:ast_node()
 	}).
--type match_clause() :: #match_clause{}.
--export_type([match_clause/0, match/0]).
+-type data() :: #?MODULE{}.
+-type ast_node() :: milang_ast:ast_node(data()).
+-export_type([data/0, ast_node/0]).
 
 -export(
-	[ new/3
+	[ new/2
 	, 'match'/1, 'match'/2
-	, 'binds'/1, 'binds'/2
 	, 'expression'/1, 'expression'/2
+	, to_string/2
 	]).
 
-new(V0,V1,V2) -> #'match_clause'{'match'=V0,'binds'=V1,'expression'=V2}.
+new(V0,V2) -> #?MODULE{'match'=V0,'expression'=V2}.
 
-'match'(R) -> R#'match_clause'.'match'.
-'match'(V,R) -> R#'match_clause'{ 'match' = V }.
+'match'(R) -> R#?MODULE.'match'.
+'match'(V,R) -> R#?MODULE{ 'match' = V }.
 
-'binds'(R) -> R#'match_clause'.'binds'.
-'binds'(V,R) -> R#'match_clause'{ 'binds' = V }.
+'expression'(R) -> R#?MODULE.'expression'.
+'expression'(V,R) -> R#?MODULE{ 'expression' = V }.
 
-'expression'(R) -> R#'match_clause'.'expression'.
-'expression'(V,R) -> R#'match_clause'{ 'expression' = V }.
+to_string(Data, Depth) ->
+	ExpressionString = milang_ast:ast_node(expression(Data), Depth + 1, fun milang_ast_expression:to_string/2),
+	MatchString = match_to_string(match(Data), Depth + 2),
+	[ "\n"
+	, lists_more:repeat(Depth, "\t")
+	, MatchString
+	, " -> \n"
+	, lists_more:repeat(Depth + 1, "\t")
+	, ExpressionString
+	, "."
+	].
+
+match_to_string(Match, Depth) ->
+	milang_ast:to_string(Match, Depth, fun milang_ast_match_bind:to_string/2).

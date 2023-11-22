@@ -15,13 +15,13 @@ let build_alias_2 = function a b ->
 	{, fst = a , snd = b }..
 
 let field_access_1 = function ->
-	let n = .fst ( build_alias_1 5 7 ),
+	let n = {}fst ( build_alias_1 5 7 ).
 	match n with
 		5 ->
 			Nothing.
 		not_5 ->
 			System.Print.ln ("field_access_1 failed " ++ ( String.fromInteger not_5 )).
-	..
+	...
 
 
 spec main = List String -> Integer.

@@ -26,6 +26,7 @@
 	, from_maybe/2
 	, map_n/2
 	, and_then_n/2
+	, and_then_all/2
 	]).
 
 %% @doc A pessimistic function the never succeedes.
@@ -205,3 +206,10 @@ and_then_n_loop(Partial, [Lazy | LazyTail]) ->
 			Error
 	end.
 
+and_then_all(AndThen, Elements) ->
+	Reversed = lists:foldl(fun(Element, Acc) ->
+		result:map_n(fun(GoodAcc, GoodElement) ->
+			[ GoodElement | GoodAcc ]
+		end, [ fun() -> Acc end, lazy:func(AndThen, [Element]) ])
+	end, {ok, []}, Elements),
+	result:map(fun lists:reverse/1, Reversed).

@@ -6,6 +6,8 @@ ERLANG_OTP = OTP-25.0
 
 DEPS = getopt
 
+SHELL_OPTS = +pc unicode
+
 system_headers = Concurrency.milang-header Core.milang-header System.Print.milang-header
 
 system_headers/%.milang-header : priv/system_headers/%.milang-header

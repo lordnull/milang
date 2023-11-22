@@ -39,7 +39,7 @@ let list_match = function l ->
 			"many".
 	...
 
-type Fork a b = [
+data Fork a b = [
 	, Left a
 	, Right b
 	].

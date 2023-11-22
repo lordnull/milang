@@ -1,31 +1,37 @@
 -module(milang_ast_class_member_default).
 
--record(default,
-	{ name
-	, function
+-record(?MODULE,
+	{ name :: milang_ast_identifier:bound()
+	, function :: milang_ast_function:ast_node()
 	}).
 
--type default() :: #default{}.
+-type data() :: #?MODULE{}.
+-type ast_node() :: milang_ast:ast_node(data()).
 
--export_type([default/0]).
+-export_type([data/0, ast_node/0]).
 
 -export(
 	[ new/2
 	, name/1, name/2
 	, function/1, function/2
+	, to_string/2
 	]).
 
 new(Name, Func) ->
-	#default{ name = Name, function= Func}.
+	#?MODULE{ name = Name, function= Func}.
 
 name(R) ->
-	R#default.name.
+	R#?MODULE.name.
 
 name(N, R) ->
-	R#default{ name = N}.
+	R#?MODULE{ name = N}.
 
 function(R) ->
-	R#default.function.
+	R#?MODULE.function.
 
 function(F, R) ->
-	R#default{ function = F }.
+	R#?MODULE{ function = F }.
+
+to_string(Data, Depth) ->
+	AsBinding = milang_ast_binding:new(name(Data), function(Data)),
+	milang_ast_binding:to_string(AsBinding, Depth).

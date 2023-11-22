@@ -1,3 +1,4 @@
+%%% @doc depricated in favor of milang_ast_concrete_function.
 -module(milang_ast_signature).
 -record(signature,
 	{ args

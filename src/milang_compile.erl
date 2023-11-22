@@ -16,6 +16,7 @@
 	|  {search_dirs, [ binary() ]}
 	|  {work_dir, binary()}
 	|  {compile_mode, program | header | module}
+	|  {max_errors, inifinty | non_neg_integer()}
 	.
 -type options() :: [ option() ].
 
@@ -29,6 +30,8 @@
 	output_file_handle,
 	append_output_buffer = [],
 	errors = [],
+	max_errors = infinity,
+	errors_count = 0,
 	module_name,
 	ast_output_buffer = [],
 	function_exports = [],
@@ -45,8 +48,8 @@
 default_imports() -> unicode:characters_to_binary(?DEFAULT_IMPORTS).
 
 always_import_ast() ->
-	{ok, Tokens, <<>>} = parse:string(default_imports(), milang_p_token:tokens()),
-	{ok, AST} = milang_lex:as_header(Tokens),
+	{ok, AST} = milang_parse:string(default_imports()),
+	%{ok, AST} = milang_lex:as_header(RawAST),
 	?LOG_DEBUG("always import ast: ~p", [AST]),
 	AST.
 
@@ -87,6 +90,7 @@ compile(AST, Options) when is_list(Options) ->
 		output_file_handle = ScratchFileHandle,
 		search_dirs = SearchDirs,
 		work_dir = WorkDir,
+		max_errors = proplists:get_value(max_errors, Options, infinity),
 		errors = LintErrors,
 		compile_mode = Mode
 	},
@@ -190,7 +194,7 @@ compile(ASTNode, Stack, CompileState) ->
 	case milang_ast:type(ASTNode) of
 		undefined ->
 			error({unknown_ast, ASTNode});
-		{ok, import} ->
+		{ok, milang_ast_import} ->
 			NodeData = milang_ast:data(ASTNode),
 			case milang_ast_import:imported_ast(NodeData) of
 				undefined ->
@@ -214,17 +218,18 @@ compile(ASTNode, Stack, CompileState) ->
 				_ ->
 					compile([], Stack, CompileState)
 			end;
-		{ok, alias} ->
+		{ok, milang_ast_alias} ->
 			NewState = type_validation(ASTNode, CompileState),
 			compile([], Stack, add_node(ASTNode, NewState));
-		{ok, binding} ->
+		{ok, milang_ast_binding} ->
 			NewState = type_validation(ASTNode, CompileState),
 			compile([], Stack, add_node(ASTNode, NewState));
-		{ok, module} ->
+		{ok, milang_ast_module} ->
 			Data = milang_ast:data(ASTNode),
 			ModuleName = milang_ast_module:name_as_string(Data),
 			NewState = CompileState#compile_state{ module_name = ModuleName },
 			compile([], Stack, add_node(ASTNode, NewState));
+		% TODO expose is part of the spec, data, or class.
 		{ok, expose} ->
 			Data = milang_ast:data(ASTNode),
 			ExposeWhat = milang_ast_expose:declaration(Data),
@@ -232,20 +237,20 @@ compile(ASTNode, Stack, CompileState) ->
 			StateWithExports = maybe_add_to_exports(ExposeWhatType, ExposeWhat, CompileState),
 			NewState = type_validation(ExposeWhat, StateWithExports),
 			compile([], Stack, add_node(ASTNode, NewState));
-		{ok, spec} ->
+		{ok, milang_ast_spec} ->
 			NewState = type_validation(ASTNode, CompileState),
 			compile([], Stack, add_node(ASTNode, NewState));
-		{ok, type} ->
+		{ok, milang_ast_type} ->
 			NewState = type_validation(ASTNode, CompileState),
 			compile([], Stack, add_node(ASTNode, NewState));
-		{ok, class} ->
+		{ok, milang_ast_class} ->
 			NewState = type_validation(ASTNode, CompileState),
 			compile([], Stack, add_node(ASTNode, NewState));
-		{ok, teach} ->
+		{ok, milang_ast_teach} ->
 			NewState = type_validation(ASTNode, CompileState),
 			compile([], Stack, add_node(ASTNode, NewState));
 		{ok, _T} ->
-			error({compile_nyi, ASTNode, Stack, CompileState})
+			error({unknown_ast, ASTNode, Stack, CompileState})
 	end.
 
 add_node(Node, State) ->
@@ -262,8 +267,8 @@ type_validation(Node, State) ->
 	end.
 
 add_support_module(ImportData, State) ->
-	NameNode = milang_ast_import:name(ImportData),
-	NameData = milang_ast:data(NameNode),
+	NameData = milang_ast_import:name(ImportData),
+	%NameData = milang_ast:data(NameNode),
 	Module = milang_ast_identifier:as_module_name(NameData),
 	OldSupports = State#compile_state.support_modules,
 	NewSupports = [Module | OldSupports],
@@ -303,7 +308,17 @@ write_to_outfile(#compile_state{ output_file_handle = Fd}, Chars) ->
 add_error(Location, Error, State) ->
 	OldErrors = State#compile_state.errors,
 	NewErrors = [{Location, Error} | OldErrors],
-	maybe_close_outfile(State#compile_state{ errors = NewErrors}).
+	NewCount = State#compile_state.errors_count + 1,
+	ClosedOutfile = maybe_close_outfile(State#compile_state{ errors = NewErrors, errors_count = NewCount}),
+	case State#compile_state.max_errors of
+		infinity ->
+			ClosedOutfile;
+		N when N > NewCount ->
+			ClosedOutfile;
+		_ ->
+			error(ClosedOutfile#compile_state.errors)
+	end.
+
 
 maybe_close_outfile(#compile_state{ output_file_handle = undefined} = State) ->
 	State;
@@ -314,26 +329,20 @@ maybe_close_outfile(State) ->
 
 import_module(Node, State) ->
 	Data = milang_ast:data(Node),
-	NameNode = milang_ast_import:name(Data),
-	NameComplex = milang_ast:data(NameNode),
+	NameComplex = milang_ast_import:name(Data),
 	Module = milang_ast_identifier:as_module_name(NameComplex),
 	MaybeFoundHeader = find_module(Module, State#compile_state.work_dir, State#compile_state.search_dirs),
 	ContentsRes = result:and_then(fun(File) ->
 		file:read_file(File)
 	end, MaybeFoundHeader),
-	TokensRes = result:and_then(fun(Binary) ->
-		case parse:string(Binary, milang_p_token:tokens()) of
-			{ok, Tokens, <<>>} ->
-				{ok, Tokens};
-			{ok, _, LeftOvers} ->
-				{error, {left_overs, LeftOvers}};
+	result:and_then(fun(Binary) ->
+		case milang_parse:string(Binary) of
+			{ok, AST} ->
+				{ok, AST};
 			Error ->
 				Error
 		end
-	end, ContentsRes),
-	result:and_then(fun(Tokens) ->
-		milang_lex:as_header(Tokens)
-	end, TokensRes).
+	end, ContentsRes).
 
 find_module(ModuleName, WorkDir, SearchDirs) ->
 	HeaderName = unicode:characters_to_binary([ModuleName, ".milang-header"]),

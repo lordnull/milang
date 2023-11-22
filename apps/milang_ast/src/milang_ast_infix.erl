@@ -9,13 +9,16 @@
 %%%
 %%% Operations also have associativity; or rather, which side gets resolved
 %%% first. Left associative gets the left side resolved first, with right the
-%%% opposite. The naming is irksome because the intuitive symbols "»" for left
-%%% and "«" for right point away from the expression to be resolved first.
+%%% opposite. The infix notation is helpful here because the notation lives on
+%%% the side that will be resolved first.
 %%%
-%%% The defaults for all operators is a weight of 1 and left associativity. This
-%%% means PEDMAS is not observed, and all operators must be written in a way that
-%%% their associativity can be swapped. Parenthesis still work as intended though,
-%%% as that creates it's own sub-expression.
+%%% There is no default of operators. All operators require some notation. This
+%%% does mean PEDMAS is not observed, and all operators must be written in a
+%%% way that thier associativiy can be swapped. There are some priorities,
+%%% however.
+%%%
+%%% Parenthesis rule all. Innermost parens are done, then moving outwards.
+%%% Function calls are then done, Finally, infix operators are then resolved,
 %%%
 %%% Associativity only matters if you have more than one infix operator, even if
 %%% it's the same operator. All operators of the same weight _must_ have the same
@@ -107,9 +110,9 @@
 
 as_series(Node) ->
 	case milang_ast:type(Node) of
-		{ok, infix_series} ->
+		{ok, milang_ast_infix_series} ->
 			{ok, Node};
-		{ok, inifix_tree} ->
+		{ok, milang_ast_inifix_tree} ->
 			{NewHead, Ops} = as_series(Node, new_branch, []),
 			Data = milang_ast_infix_series:new(NewHead, Ops),
 			milang_ast:transform_data(fun(_) -> Data end, Node)
@@ -118,9 +121,9 @@ as_series(Node) ->
 as_tree(Node) ->
 	?LOG_DEBUG("series we're converting: ~p", [Node]),
 	case milang_ast:type(Node) of
-		{ok, infix_tree} ->
+		{ok, milang_ast_infix_tree} ->
 			{ok, Node};
-		{ok, infix_series} ->
+		{ok, milang_ast_infix_series} ->
 			Data = milang_ast:data(Node),
 			Head = milang_ast_infix_series:head(Data),
 			Ops = milang_ast_infix_series:ops(Data),
@@ -138,7 +141,8 @@ weight_to_assoc([], Map) ->
 	{ok, Map};
 weight_to_assoc([ Op | Tail], Map) ->
 	OpData = milang_ast:data(Op),
-	Notation = milang_ast_infix_operation:notation(OpData),
+	NotationNode = milang_ast_infix_operation:notation(OpData),
+	Notation = milang_ast:data(NotationNode),
 	Weight = milang_ast_infix_notation:weight(Notation),
 	Assoc = milang_ast_infix_notation:assoc(Notation),
 	case maps:find(Weight, Map) of
@@ -150,15 +154,15 @@ weight_to_assoc([ Op | Tail], Map) ->
 		{ok, either} ->
 			NewMap = Map#{ Weight => Assoc },
 			weight_to_assoc(Tail, NewMap);
-		{ok, _ExistingAssoc} when Assoc =:= either ->
-			weight_to_assoc(Tail, Map);
 		{ok, _DifferAssoc} ->
 			{error, {operation_reversed_associativity, Op}}
 	end.
 
 as_tree(Head, [], _DoesNotMatter) ->
 	% we have reached the end of leftward branches, and thus, have hit the head.
-	% the head is almost certainly not an infix expression.
+	% the head is a non-infix expression by definition. (subexpressions are
+	% considered a single non-infix expression even if the expression within the
+	% parenthesis is an infix expression).
 	Head;
 as_tree(Head, Ops, [{Weight, right} | WeightTail] = AllWeight) ->
 	% we need to be looking for rightward branches. However, the head and ops we
@@ -223,7 +227,8 @@ split_fun(Weight) ->
 	fun(Node) ->
 		?LOG_DEBUG("ye old e: ~p", [Node]),
 		Data = milang_ast:data(Node),
-		Notation = milang_ast_infix_operation:notation(Data),
+		NotationNode = milang_ast_infix_operation:notation(Data),
+		Notation = milang_ast:data(NotationNode),
 		N = milang_ast_infix_notation:weight(Notation),
 		N =/= Weight
 	end.

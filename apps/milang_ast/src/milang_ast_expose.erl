@@ -1,3 +1,4 @@
+%%% @doc depricated in favor of putting the expose directly on what is exposed.
 -module(milang_ast_expose).
 
 -export(

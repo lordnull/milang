@@ -617,7 +617,7 @@ class Numerical a when [
 	spec ^ = a -> a -> a.
 	.
 
-type Integer = Kernel.BigInt.
+data Integer = Kernel.BigInt.
 
 teach Integer class Numerical ->
 	let == = function a b ->

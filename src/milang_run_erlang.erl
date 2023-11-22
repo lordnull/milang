@@ -216,21 +216,21 @@ write_function({ok, alias}, AST, Symbols, WriteFun) ->
 			end
 		end, Constructors)
 	end, ResultConstructors),
-	SymbolsTableWithOriginal = result:and_then_n([LocalNameRes, OriginalRes], fun(LocalName, Original) ->
+	SymbolsTableWithOriginal = result:and_then_n(fun(LocalName, Original) ->
 		{OriginalData, _} = Original,
 		OriginalName = milang_ast_concrete:name(OriginalData),
 		milang_scope:insert(LocalName, {alias, OriginalName}, Symbols)
-	end),
-	SymbolsWithAllRes = result:and_then_n([ResultConstructors, SymbolsTableWithOriginal], fun(Constructors, InSymbols) ->
-		result:foldl(fun(Constructor, TableAcc) ->
-			case Constructor of
-				#{ local := L } ->
-					milang_scope:insert(L, Constructor, TableAcc);
-				_ ->
-					result:ok(TableAcc)
-			end
-		end, InSymbols, Constructors)
-	end),
+	end, [fun() -> LocalNameRes end, fun() -> OriginalRes end] ),
+	SymbolsWithAllRes = result:and_then_n(fun(Constructors, InSymbols) ->
+		lists:foldl(fun
+			(#{ local := L} = Constructor, TableAcc) ->
+				result:and_then(fun(GoodTableAcc) ->
+					milang_scope:insert(L, Constructor, GoodTableAcc)
+				end, TableAcc);
+			(_, TableAcc) ->
+				TableAcc
+		end, {ok, InSymbols}, Constructors)
+	end, [fun() -> ResultConstructors end, fun() -> SymbolsTableWithOriginal end] ),
 	case SymbolsWithAllRes of
 		{error, Err} ->
 			?LOG_ERROR("Writing alias failed due to ~p.~n"

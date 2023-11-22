@@ -1,7 +1,8 @@
 -module(milang_type_validation).
 
 -export(
-	[ validate_list/1, validate_list/2
+	[ new/0
+	, validate_list/2
 	]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -126,7 +127,7 @@
 
 -type entry() :: concrete() | data() | constructor() | alias() | class() | placeholder().
 
--type lookup_table() :: milang_type_table:table().
+-type lookup_table() :: nonempty_list( #{ mi_identifier() => entry()} ).
 
 -export_type(
 	[ concrete/0
@@ -139,8 +140,9 @@
 	, mi_identifier/0
 	, maybe_identifier/0]).
 
-validate_list(Nodes) ->
-	validate_list(Nodes, milang_type_table:new()).
+-spec new() -> lookup_table().
+new() ->
+	[#{}].
 
 -spec validate_list([ milang_ast:ast_node() ], lookup_table()) -> {ok, lookup_table()} | {error, term()}.
 validate_list(Nodes, Table) ->
@@ -171,126 +173,73 @@ validate_node(milang_ast_spec, Node, Table) ->
 
 validate_node(milang_ast_type, Node, Table) ->
 	Data = milang_ast:data(Node),
-	validate_data(Data, Table);
+	NameComplex = milang_ast_type:name(Data),
+	ConstraintsNode = milang_ast_type:constraints(Data),
+	ConstructorsNode = milang_ast_type:constructors(Data),
+	Args = milang_ast_type:args(Data),
+	{_, Name} = NameComplex,
+	Constraints = milang_ast_constraints:constraints(milang_ast:data(ConstraintsNode)),
+	ConstraintMap = lists:foldl(fun(ConstraintNode, Acc) ->
+		Constraint = milang_ast:data(ConstraintNode),
+		Key = milang_ast_constraint:var(Constraint),
+		Val = milang_ast_constraint:class(Constraint),
+		case type_of_node(Val, Table) of
+			{ok, T} ->
+				Acc#{ Key => T };
+			Wut ->
+				error({invalid_constraint, Key, Wut})
+		end
+	end, #{}, Constraints),
+	ArgNames = [ {placeholder, identifier(milang_ast:data(A))} || A <- Args],
+	ConstructorsData = milang_ast:data(ConstructorsNode),
+	Constructors = milang_ast_constructors:constructors(ConstructorsData),
+	HasConstructors = case Constructors of
+		[] -> false;
+		_ -> true
+	end,
+	TopType = #tv_data{ arg_names = ArgNames, constraints = ConstraintMap, has_constructors = HasConstructors },
+	MidTable = set_entry(Name, TopType, Table),
+	ConstructorFoldFun = fun(ConstructorNode, TableAcc) ->
+		ConstructorData = milang_ast:data(ConstructorNode),
+		ConstructorRes = case milang_ast_concrete:type(ConstructorData) of
+			function ->
+				{error, {constructor_cannot_be_function, ConstructorData}};
+			data ->
+				{ok, milang_ast_concrete:arg(ConstructorData)}
+		end,
 
-%	% TODO allow an arg to be constraints to multiple classes.
-%	ConstraintsNode = milang_ast_type:constraints(Data),
-%	ConstraintsData = milang_ast:data(ConstraintsNode),
-%	ConstraintsAsMap = lists:foldl(fun(ConstraintNode, Acc) ->
-%		ConstraintData = milang_ast:data(ConstraintNode),
-%		Var = milang_ast_constraint:var(ConstraintData),
-%		Class = milang_ast_constraint:class(ConstraintData),
-%		maps:put(Var, Class, Acc)
-%	end, #{}, milang_ast_constraints:constraints(ConstraintsData)),
-%
-%	ArgNodes = milang_ast_type:args(Data),
-%	ArgNames = lists:map(fun(ArgNode) ->
-%		identifier(milang_ast:data(ArgNode))
-%	end, ArgNodes),
-%
-%	AsData = lists:map(fun(ArgName) ->
-%		case maps:find(ArgName, ConstraintsAsMap) of
-%			error ->
-%				{ArgName, any};
-%			{ok, Class} ->
-%				{ArgName, Class}
-%		end
-%	end, ArgNames),
-%
-%	NameComplex = milang_ast_type:name(Data),
-%	{_, Name} = NameComplex,
-%	InsertedDataResult = milang_type_table:insert_new_data({data, Name}, [C || {_, C} <- AsData], Table),
-%
-%	ConstructorsNode = milang_ast_type:constructors(Data),
-%	Constructors = milang_ast:data(ConstructorsNode),
-%	Builders = case milang_ast_constructors:constructors(Constructors) of
-%		[] ->
-%			Key = {function, Name},
-%			Args = AsData,
-%			Result = {data, Name, Args},
-%			{Key, Args ++ [ Result ]};
-%		ConstructorNodes ->
-%			lists:map(fun(ConstructorNode) ->
-%				ConstructorConcreteData = milang_ast:data(ConstructorNode),
-%				ConstructorConcreteNode = milang_ast_concrete:arg(ConstructorConcreteData),
-%				ConstructorData = milang_ast:data(ConstructorConcreteNode),
-%				ConstructorName = milang_ast_concrete_data:name(ConstructorData),
-%				ConstructorArgs = milang_ast_concrete_data:args(ConstructorData),
-%				Key = {function, ConstructorName},
-%				Args = lists:map(fun(ArgName) ->
-%					{ArgName, proplists:get_value(ArgName, AsData, any)}
-%				end, ConstructorArgs)
-%
-%			end, ConstructorNodes)
-%	end,
+		ConcreteToConstructor = fun(ConcreteNode) ->
+			ConcreteData = milang_ast:data(ConcreteNode),
+			ConstructorName = milang_ast_concrete_data:name(ConcreteData),
+			ConstructorArgsNodes = milang_ast_concrete_data:args(ConcreteData),
+			{ConstructorName, ConstructorArgsNodes}
+		end,
 
-%	NameComplex = milang_ast_type:name(Data),
-%	ConstraintsNode = milang_ast_type:constraints(Data),
-%	ConstructorsNode = milang_ast_type:constructors(Data),
-%	Args = milang_ast_type:args(Data),
-%	{_, Name} = NameComplex,
-%	Constraints = milang_ast_constraints:constraints(milang_ast:data(ConstraintsNode)),
-%	ConstraintMap = lists:foldl(fun(ConstraintNode, Acc) ->
-%		Constraint = milang_ast:data(ConstraintNode),
-%		Key = milang_ast_constraint:var(Constraint),
-%		Val = milang_ast_constraint:class(Constraint),
-%		case type_of_node(Val, Table) of
-%			{ok, T} ->
-%				Acc#{ Key => T };
-%			Wut ->
-%				error({invalid_constraint, Key, Wut})
-%		end
-%	end, #{}, Constraints),
-%	ArgNames = [ {placeholder, identifier(milang_ast:data(A))} || A <- Args],
-%	ConstructorsData = milang_ast:data(ConstructorsNode),
-%	Constructors = milang_ast_constructors:constructors(ConstructorsData),
-%	HasConstructors = case Constructors of
-%		[] -> false;
-%		_ -> true
-%	end,
-%	TopType = #tv_data{ arg_names = ArgNames, constraints = ConstraintMap, has_constructors = HasConstructors },
-%	MidTable = set_entry(Name, TopType, Table),
-%	ConstructorFoldFun = fun(ConstructorNode, TableAcc) ->
-%		ConstructorData = milang_ast:data(ConstructorNode),
-%		ConstructorRes = case milang_ast_concrete:type(ConstructorData) of
-%			function ->
-%				{error, {constructor_cannot_be_function, ConstructorData}};
-%			data ->
-%				{ok, milang_ast_concrete:arg(ConstructorData)}
-%		end,
-%
-%		ConcreteToConstructor = fun(ConcreteNode) ->
-%			ConcreteData = milang_ast:data(ConcreteNode),
-%			ConstructorName = milang_ast_concrete_data:name(ConcreteData),
-%			ConstructorArgsNodes = milang_ast_concrete_data:args(ConcreteData),
-%			{ConstructorName, ConstructorArgsNodes}
-%		end,
-%
-%		AsConstructorRes = result:map(ConcreteToConstructor, ConstructorRes),
-%
-%		ValidateConstructorArgs = fun({_ConstructorName, ConstructorArgsNodes}) ->
-%			lists:foldl(fun(N, TypesThusFar) ->
-%				result:map_n(fun(NodeType, Types) ->
-%					[NodeType | Types]
-%				end, [ fun() -> type_of_node(N, TableAcc) end, fun() -> TypesThusFar end ])
-%			end, {ok, []}, ConstructorArgsNodes)
-%		end,
-%
-%		result:map_n(fun({{identifier_bound, ConstructorName}, _}, TypedArgs) ->
-%			Entry = #tv_constructor{ constructor_of = Name, args = TypedArgs},
-%			set_entry(ConstructorName, Entry, TableAcc)
-%		end, [ fun() -> AsConstructorRes end, lazy:func(fun result:map/2, [ValidateConstructorArgs, AsConstructorRes]) ])
-%	end,
-%	?LOG_DEBUG("So the constructors I got: ~p", [Constructors]),
-%	Out = lists:foldl(fun(CNode, TableRes) ->
-%		result:and_then(fun(InTable) ->
-%			ConstructorFoldFun(CNode, InTable)
-%		end, TableRes)
-%	end, {ok, MidTable}, Constructors),
-%	?LOG_DEBUG("validated a declaration_type: ~p~n"
-%		"    Out: ~p"
-%		, [Node, case Out of {ok, _} -> ok; _ -> Out end]),
-%	Out;
+		AsConstructorRes = result:map(ConcreteToConstructor, ConstructorRes),
+
+		ValidateConstructorArgs = fun({_ConstructorName, ConstructorArgsNodes}) ->
+			lists:foldl(fun(N, TypesThusFar) ->
+				result:map_n(fun(NodeType, Types) ->
+					[NodeType | Types]
+				end, [ fun() -> type_of_node(N, TableAcc) end, fun() -> TypesThusFar end ])
+			end, {ok, []}, ConstructorArgsNodes)
+		end,
+
+		result:map_n(fun({{identifier_bound, ConstructorName}, _}, TypedArgs) ->
+			Entry = #tv_constructor{ constructor_of = Name, args = TypedArgs},
+			set_entry(ConstructorName, Entry, TableAcc)
+		end, [ fun() -> AsConstructorRes end, lazy:func(fun result:map/2, [ValidateConstructorArgs, AsConstructorRes]) ])
+	end,
+	?LOG_DEBUG("So the constructors I got: ~p", [Constructors]),
+	Out = lists:foldl(fun(CNode, TableRes) ->
+		result:and_then(fun(InTable) ->
+			ConstructorFoldFun(CNode, InTable)
+		end, TableRes)
+	end, {ok, MidTable}, Constructors),
+	?LOG_DEBUG("validated a declaration_type: ~p~n"
+		"    Out: ~p"
+		, [Node, case Out of {ok, _} -> ok; _ -> Out end]),
+	Out;
 
 validate_node(milang_ast_alias, Node, Table) ->
 	Data = milang_ast:data(Node),
@@ -389,48 +338,6 @@ validate_spec(Data, Table) ->
 		"    Output: ~p"
 		, [ Data, case Out of {ok, _} -> ok; _ -> Out end]),
 	Out.
-
-validate_data(Data, Table) ->
-	{identifier_bound, Name} = milang_ast_type:name(Data),
-	ArgNodes = milang_ast_type:args(Data),
-	ConstraintsNode = milang_ast_type:constraints(Data),
-	ConstructorsNode = milang_ast_type:constructors(Data),
-
-	ConstraintsData = milang_ast:data(ConstraintsNode),
-	ConstraintNodes = milang_ast_constraints:constraints(ConstraintsData),
-	ConstraintMap = lists:foldl(fun(ConstraintNode, Acc) ->
-		ConstraintData = milang_ast:data(ConstraintNode),
-		Var = milang_ast_constraint:var(ConstraintData),
-		Class = milang_ast_constraint:class(ConstraintData),
-		maps:put(Var, [ Class ], Acc)
-	end, #{}, ConstraintNodes),
-
-	ArgTypes = lists:map(fun({identifier_bound, ArgName}) ->
-		Classes = maps:get(ArgName, ConstraintMap, []),
-		milang_type:constrained(ArgName, Classes)
-	end, ArgNodes),
-
-	TableEntry = milang_type:data_type(Name, ArgTypes, []),
-
-	TableWithDataTypeResult = milang_type_table:insert_new_data(Name, TableEntry, Table),
-
-	ConstructorsData = milang_ast:data(ConstructorsNode),
-	ConstructorNodes = milang_ast_constructors:constructors(ConstructorsData),
-
-	lists:foldl(fun(ConstructorNode, TableRes) ->
-		result:and_then(fun(Table) ->
-			validate_constructor(TableEntry, ConstructorNode, Table)
-		end, TableRes)
-	end, TableWithDataTypeResult, ConstructorNodes).
-
-
-validate_constructor(DataType, ConcreteNode, Table) ->
-	ConcreteData = milang_ast:data(ConcreteNode),
-	ConcreteDataNode = milang_ast_concrete:arg(ConcreteData),
-	ConcreteDataData = milang_ast:data(ConcreteDataNode),
-	{identifier_bound, Name} = milang_ast_concrete_data:name(ConcreteDataData),
-	ArgNodes = milang_ast_concrete_data:args(ConcreteDataData),
-
 
 validate_teach(Data, Table) ->
 	StudentNode = milang_ast_teach:student(Data),

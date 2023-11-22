@@ -1,7 +1,7 @@
 {- the test is primarily to ensure things compile and pass type checks. -}
 module ClassTest.
 
-type Pants = [
+data Pants = [
 	, NoPants
 	, Kilt
 	, Jeans
@@ -9,7 +9,7 @@ type Pants = [
 	, Skinny
 	].
 
-type Tuple a b.
+data Tuple a b.
 
 teach Pants class Core.Equality ->
 	let == = function p1 p2 ->

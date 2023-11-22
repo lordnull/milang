@@ -133,7 +133,7 @@
 	{ element_bindings :: [ {milang_type:variable_name(), any()} ]
 	, record_itself :: maybe:maybe(variable_name())
 	}).
--type record_binding(BindType) :: #record_binding{ element_bindings :: [BindType]}.
+-type record_binding(BindType) :: #record_binding{ element_bindings :: [{milang_type:variable_name(), BindType}]}.
 
 -record(constructor_binding,
 	{ constructor_name :: milang_type:type_name()

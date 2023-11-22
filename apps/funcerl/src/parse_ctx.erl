@@ -3,168 +3,167 @@
 %%% @end
 -module(parse_ctx).
 
--type row() :: non_neg_integer().
--type col() :: non_neg_integer().
+-type row() :: pos_integer().
+-type col() :: pos_integer().
 -type location() :: {row(), col()}.
--type offset() :: non_neg_integer().
+-type byte_offset() :: non_neg_integer().
 -record(context,
 	{ source_string :: unicode:chardata()
-	, parse_result :: term()
-	, user_contexts = [] :: maybe_improper_list(term(), term() | [])
-	, location  = {0, 0} :: location()
-	, offset = 0 :: non_neg_integer()
+	, user_contexts = [] :: [{term(), location()}]
+	, location  = {1, 1} :: location()
+	, byte_offset = 0 :: non_neg_integer()
 	}).
 
--type context(State, Context) ::
-	#context{ parse_result :: State, user_contexts :: maybe_improper_list(Context, Context | []) }.
+-type context(Context) ::
+	#context{ user_contexts :: [ {Context, location()} ]}.
 
 -export_type(
 	[ row/0
 	, col/0
 	, location/0
-	, offset/0
-	, context/2
+	, byte_offset/0
+	, context/1
 	]).
 
 -export(
 	[ new/1
-	, new/2
 	, source_string/1
 	, location/1
-	, offset/1
-	, parse_result/1
-	, parse_result/2
+	, byte_offset/1
+	, source_from_offset/1
 	, user_context/1
 	, push_context/2
 	, pop_context/1
-	, chomp_and_update/2
-	, update_location/3
-	, map/2
+	, chomp/1
+	, between_offsets/3
+	, slice/3
 	]).
 -export(
 	[ chomp_n/2
+	, get_first_grapheme/1
+	, count_graphemes/1
 	]).
 
--spec new(unicode:chardata()) -> context(undefined, term()).
+-spec new(unicode:chardata()) -> context(term()).
 new(SrcString) ->
-	new(SrcString, undefined).
-
--spec new(unicode:chardata(), V) -> context(V, term()).
-new(Str, State) ->
 	#context{
-		source_string = Str,
-		parse_result = State
+		source_string = unicode:characters_to_nfkc_binary(SrcString)
 	}.
 
--spec source_string(context(term(), term())) -> unicode:chardata().
+-spec source_string(context(term())) -> unicode:chardata().
 source_string(Context) ->
 	Context#context.source_string.
 
--spec location(context(term(), term())) -> location().
+-spec location(context(term())) -> location().
 location(Context) ->
 	Context#context.location.
 
--spec offset(context(term(), term())) -> non_neg_integer().
-offset(Ctx) ->
-	Ctx#context.offset.
+-spec byte_offset(context(term())) -> non_neg_integer().
+byte_offset(Ctx) ->
+	Ctx#context.byte_offset.
 
--spec parse_result(context(A, term())) -> A.
-parse_result(Context) ->
-	Context#context.parse_result.
+-spec source_from_offset(context(term())) -> unicode:chardata().
+source_from_offset(Context) ->
+	#context{ byte_offset = Offset, source_string = Source} = Context,
+	case Source of
+		<<_:Offset/binary, Rest/binary>> ->
+			Rest;
+		_OffsetTooBig ->
+			<<>>
+	end.
 
--spec parse_result(context(term(), C), A) -> context(A, C).
-parse_result(Context, Result) ->
-	Context#context{ parse_result = Result}.
-
--spec map(fun((A) -> NextA ), context(A, C)) -> context(NextA, C).
-map(Mapper, Context) ->
-	InResult = parse_result(Context),
-	OutResult = Mapper(InResult),
-	parse_result(Context, OutResult).
-
--spec user_context(context(term(), C)) -> C.
+-spec user_context(context(C)) -> C.
 user_context(#context{ user_contexts = UserContext}) ->
 	UserContext.
 
--spec push_context(context(A, C), NewC)  -> context(A, maybe_improper_list(NewC, C)).
+-spec push_context(context(C), C)  -> context(C).
 push_context(Context, UserContext) ->
-	NewUserContext = [UserContext | Context#context.user_contexts],
+	NewUserContext = [{UserContext, Context#context.location} | Context#context.user_contexts],
 	Context#context{ user_contexts = NewUserContext}.
 
--spec pop_context(context(A, maybe_improper_list(term(), T))) -> context(A, T).
+-spec pop_context(context(C)) -> context(C).
 pop_context(#context{ user_contexts = []} = Context) ->
 	Context;
 pop_context(#context{ user_contexts = [ _Popped | NewUserContext ]} = Context) ->
 	Context#context{ user_contexts = NewUserContext }.
 
 
-chomp_and_update(Context, ChompN) ->
-	OldSource = source_string(Context),
-	{ChompedStr, NewSource} = chomp_n(ChompN, OldSource),
-	update_location(ChompedStr, NewSource, Context).
-
-update_location(ChompedStr, NewSource, Context) ->
-	OldLocation = location(Context),
-	OldOffset = offset(Context),
-	{NewLocation, NewOffsetDiff} = do_update_location(OldLocation, OldOffset, ChompedStr),
-	Context#context{ source_string = NewSource, location = NewLocation, offset = OldOffset + NewOffsetDiff }.
-
-chomp_n(N, Source) ->
-	{_ChompsLeft, SourceLeft, Acc} = chomp_loop(N, Source, []),
-	{lists:reverse(Acc), SourceLeft}.
-
-%chomp_loop(ChompsLeft, Source, Acc) ->
-chomp_loop(0, Source, Acc) ->
-	{0, Source, Acc};
-chomp_loop(N, <<>>, Acc) ->
-	{N, <<>>, Acc};
-chomp_loop(N, [], Acc) ->
-	{N, <<>>, Acc};
-chomp_loop(N, [ C | Tail], Acc) ->
-	{ChompsLeft, NewSrc, NewAcc} = chomp_loop(N, C, Acc),
-	case NewSrc of
-		<<>> ->
-			chomp_loop(ChompsLeft, Tail, NewAcc);
-		[] ->
-			chomp_loop(ChompsLeft, Tail, NewAcc);
-		_ ->
-			chomp_loop(ChompsLeft, [NewSrc | Tail], NewAcc)
-	end;
-chomp_loop(N, C, Acc) when is_integer(C) ->
-	chomp_loop(N - 1, [], [ C | Acc]);
-chomp_loop(N, <<C/utf8, Tail/binary>>, Acc) ->
-	chomp_loop(N - 1, Tail, [C | Acc]).
-
-do_update_location(Location, Offset, <<>>) ->
-	{Location, Offset};
-do_update_location(Location, Offset, []) ->
-	{Location, Offset};
-do_update_location(Location, OldOffset, Str) ->
-	case re:split(Str, "^\\R", [{newline, any}, bsr_unicode, unicode, ucp]) of
-		[Pre, Caputured, Post] ->
-			AddedOffset = count_characters([Pre, Caputured]),
-			{OldRow, _} = Location,
-			NewLocation = {OldRow + 1, 0},
-			do_update_location(NewLocation, OldOffset + AddedOffset, Post);
-		_NoSplit ->
-			{_C, NewStr} = chomp_n(1, Str),
-			{OldRow, OldCol} = Location,
-			NewLocation = {OldRow, OldCol + 1},
-			NewOffset = OldOffset + 1,
-			do_update_location(NewLocation, NewOffset, NewStr)
+chomp(Context) ->
+	Source = source_string(Context),
+	Offset = byte_offset(Context),
+	case Source of
+		<<_:Offset/binary, Tail/binary>> ->
+			update_location(Tail, Context);
+		<<_:Offset/binary>> ->
+			Context
 	end.
 
-count_characters(String) ->
-	count_characters(String, 0).
+chomp_n(0, Context) ->
+	Context;
+chomp_n(N, Context) ->
+	chomp_n(N - 1, chomp(Context)).
 
-count_characters([], Acc) ->
-	Acc;
-count_characters(<<>>, Acc) ->
-	Acc;
-count_characters([ SubString | Tail ], Acc) ->
-	count_characters(Tail, count_characters(SubString, Acc));
-count_characters(<<_C/utf8, Rest/binary>>, Acc) ->
-	count_characters(Rest, Acc + 1);
-count_characters(N, Acc) when is_integer(N) ->
-	Acc + 1.
+%% @doc Take a grapheme from the string and update the row, column, and byte
+%% offsets if that grapheme was removed.
+update_location(String, Context) ->
+	OldLocation = location(Context),
+	OldOffset = byte_offset(Context),
+	Grapheme = get_first_grapheme(String),
+	NewOffsetDiff = size(Grapheme),
+	NewLocation = do_update_location(OldLocation, Grapheme),
+	Context#context{ location = NewLocation, byte_offset = OldOffset + NewOffsetDiff }.
+
+get_first_grapheme(String) ->
+	case re:run(String, "^\\X", [{capture, first, binary}, unicode]) of
+		nomatch ->
+			<<>>;
+		{match, [Grapheme | _]} when is_binary(Grapheme) ->
+			Grapheme;
+		{match, LikelyError} ->
+			io:format("invalid regex to get a grapheme: ~p~n", [LikelyError]),
+			<<>>
+	end.
+
+count_graphemes(String) ->
+	count_graphemes(String, 0).
+
+count_graphemes(String, N) ->
+	case get_first_grapheme(String) of
+		<<>> ->
+			N;
+		Grapheme ->
+			Size = size(Grapheme),
+			<<_:Size/binary, Rest/binary>> = String,
+			count_graphemes(Rest, N + 1)
+	end.
+
+do_update_location(Location, <<>>) ->
+	Location;
+do_update_location(Location, Grapheme) ->
+	case re:run(unicode:characters_to_binary(Grapheme), "^\\R$", [{newline, any}, bsr_unicode, unicode, ucp]) of
+		{match, _} ->
+			{OldRow, _} = Location,
+			{OldRow + 1, 1};
+		nomatch ->
+			{OldRow, OldCol} = Location,
+			{OldRow, OldCol + 1}
+	end.
+
+between_offsets(EndOffset, BeginOffset, Context) when EndOffset > BeginOffset ->
+	between_offsets(BeginOffset, EndOffset, Context);
+between_offsets(BeginOffset, EndOffset, Context) ->
+	Length = EndOffset - BeginOffset,
+	slice(BeginOffset, Length, Context).
+
+-spec slice(non_neg_integer(), non_neg_integer(), context(term())) -> unicode:chardata().
+slice(Offset, Length, Context) ->
+	Source = source_string(Context),
+	case Source of
+		<<_:Offset/binary, Caputured:Length/binary, _/binary>> ->
+			Caputured;
+		<<_:Offset/binary, Rest/binary>> ->
+			Rest;
+		_OffsetTooBig ->
+			<<>>
+	end.
 

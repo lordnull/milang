@@ -1,4 +1,4 @@
-type List.List a = [
+data List.List a = [
 	, List.Nil
 	, List.Cons a ( List.List a)
 	].

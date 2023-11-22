@@ -1,4 +1,4 @@
-type Maybe.Maybe a = [
+data Maybe.Maybe a = [
 	, Maybe.Nothing
 	, Maybe.Some a
 	].
